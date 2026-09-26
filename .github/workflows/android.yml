@@ -30,7 +30,7 @@ jobs:
       - name: Verify Microsoft building footprints
         run: |
           test -s data/ms-buildings.geojson
-          node -e "const d=require('./data/ms-buildings.geojson'); if(!Array.isArray(d.features)||d.features.length<10) process.exit(1); console.log('Microsoft buildings:',d.features.length)"
+          node -e "const fs=require('fs'); const d=JSON.parse(fs.readFileSync('data/ms-buildings.geojson','utf8')); if(!Array.isArray(d.features)||d.features.length<10) process.exit(1); console.log('Microsoft buildings:',d.features.length)"
 
       - name: Fetch required bundled map snapshot
         run: node scripts/fetch-osm-snapshot.mjs --required
