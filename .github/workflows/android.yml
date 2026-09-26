@@ -50,13 +50,6 @@ jobs:
 
       - name: Create Android project
         run: npx cap add android
-'
-          android {
-              androidResources {
-                  noCompress += ['pack']
-              }
-          }
-          EOF
 
       - name: Keep stable debug signing key
         uses: actions/cache@v4
