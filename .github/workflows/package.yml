@@ -20,7 +20,11 @@ jobs:
       - name: Generate evidence-gated overrides
         run: node scripts/build-verified-overrides.mjs
       - name: Fetch reproducible OSM snapshot
-        run: node scripts/fetch-osm-snapshot.mjs
+        run: node scripts/fetch-osm-snapshot.mjs --required
+      - name: Verify bundled map snapshot
+        run: |
+          test -s data/osm-snapshot.json
+          node -e "const d=require('./data/osm-snapshot.json'); if(!Array.isArray(d.elements)||d.elements.length<10) process.exit(1); console.log('OSM snapshot elements:',d.elements.length)"
       - name: Build self-contained web app
         run: npm run build:web
       - name: Build portable ZIP
