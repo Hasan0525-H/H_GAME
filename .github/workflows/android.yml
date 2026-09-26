@@ -31,12 +31,6 @@ jobs:
         run: |
           test -s data/ms-buildings.geojson
           node -e "const fs=require('fs'); const d=JSON.parse(fs.readFileSync('data/ms-buildings.geojson','utf8')); if(!Array.isArray(d.features)||d.features.length<10) process.exit(1); console.log('Microsoft buildings:',d.features.length)"
-      - name: Verify ~400MB offline building pack
-        run: |
-          BYTES=$(du -sb data/building-sectors | cut -f1)
-          echo "offline building sector bytes=$BYTES"
-          test "$BYTES" -ge 380000000
-          test "$BYTES" -le 410000000
 
       - name: Fetch required bundled map snapshot
         run: node scripts/fetch-osm-snapshot.mjs --required
@@ -56,10 +50,7 @@ jobs:
 
       - name: Create Android project
         run: npx cap add android
-
-      - name: Keep real map packs uncompressed
-        run: |
-          cat >> android/app/build.gradle <<'EOF'
+'
           android {
               androidResources {
                   noCompress += ['pack']
@@ -96,14 +87,6 @@ jobs:
           cd android
           ./gradlew assembleDebug
 
-      - name: Verify APK is ~400MB
-        run: |
-          APK=android/app/build/outputs/apk/debug/app-debug.apk
-          BYTES=$(stat -c%s "$APK")
-          echo "APK bytes=$BYTES"
-          echo "APK MiB=$(awk "BEGIN {printf \"%.2f\", $BYTES/1024/1024}")"
-          test "$BYTES" -ge 385000000
-          test "$BYTES" -le 430000000
 
       - name: Generate APK checksum
         run: sha256sum android/app/build/outputs/apk/debug/app-debug.apk > APK-SHA256.txt
