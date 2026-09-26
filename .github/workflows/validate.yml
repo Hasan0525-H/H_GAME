@@ -15,6 +15,7 @@ jobs:
           node --check main.js
           node --check scripts/fetch-osm-snapshot.mjs
           node --check scripts/build-verified-overrides.mjs
+          node --check scripts/build-web.mjs
       - name: Check required files
         run: test -f index.html && test -f styles.css && test -f data/reference-sources.json && test -f data/ground-truth.json && test -f data/ground-truth.schema.json && test -f data/verified-overrides.json && test -f capacitor.config.json && test -f package.json
       - name: Verify generated overrides are current
