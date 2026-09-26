@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <meta name="theme-color" content="#d8c59a" />
+  <title>سعيدة الصوالحة | جولة واقعية</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="game"></div>
+
+  <div id="hud">
+    <div class="panel">
+      <strong>سعيدة الصوالحة</strong>
+      <span id="status">جاري تحميل الخريطة الحقيقية...</span>
+      <span id="coords">18.589790, 41.412342</span>
+    </div>
+    <div class="panel help">
+      <span>كمبيوتر: WASD + الماوس</span>
+      <span>جوال: العصا اليسرى للحركة والسحب للنظر</span>
+    </div>
+  </div>
+
+  <div id="crosshair">•</div>
+  <div id="start">
+    <div class="card">
+      <h1>جولة سعيدة الصوالحة</h1>
+      <p>الخريطة تُبنى من بيانات OpenStreetMap الحقيقية حول الإحداثيات التي حددتها، من دون إضافة جبال وهمية.</p>
+      <button id="startBtn">ابدأ التجول</button>
+      <small>تحتاج اتصال إنترنت عند أول تحميل لجلب الطرق والمباني.</small>
+    </div>
+  </div>
+
+  <div id="mobileControls">
+    <div id="joystick"><div id="stick"></div></div>
+  </div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
