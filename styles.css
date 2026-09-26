@@ -38,3 +38,9 @@ button{border:0;border-radius:14px;background:#20251f;color:#fff;padding:14px 22
   #poiSearch,#goPoiBtn{font-size:10px;padding:7px 6px}
   #attribution{font-size:9px}
 }
+
+#clearRouteBtn{padding:8px 10px;font-size:11px;border-radius:11px;background:rgba(24,24,22,.58);pointer-events:auto}
+#routeStatus{font-size:11px;color:rgba(255,255,255,.88);line-height:1.45}
+@media(max-width:900px),(pointer:coarse){
+  #clearRouteBtn,#routeStatus{font-size:10px}
+}
