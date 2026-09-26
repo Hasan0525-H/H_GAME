@@ -46,11 +46,19 @@
   </div>
 
   <div id="mapPanel"><canvas id="miniMap" width="220" height="220"></canvas><button id="homeBtn" type="button">العودة لنقطة البداية</button>
-    <button id="refreshMapBtn" type="button">تحديث بيانات المنطقة</button></div>
+    <button id="refreshMapBtn" type="button">تحديث بيانات المنطقة</button>
+    <div id="poiNav">
+      <input id="poiSearch" list="poiOptions" type="search" placeholder="ابحث عن معلم موثق..." autocomplete="off" />
+      <datalist id="poiOptions"></datalist>
+      <button id="goPoiBtn" type="button">انتقل لأقرب طريق عند المعلم</button>
+    </div>
+  </div>
 
   <div id="mobileControls">
     <div id="joystick"><div id="stick"></div></div>
   </div>
+
+  <div id="attribution">© OpenStreetMap contributors</div>
 
   <script type="module" src="./main.js"></script>
   <script>
