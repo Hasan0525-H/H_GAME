@@ -2,7 +2,10 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.m
 import { PointerLockControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.1/examples/jsm/controls/PointerLockControls.js';
 
 const CENTER = { lat: 18.58979, lon: 41.4123419 };
-const LOAD_RADIUS_M = 3000;
+const LOAD_RADIUS_M = 1800;
+const STREAM_CELL_M = 1400;
+const loadedCells = new Set();
+const renderedWays = new Set();
 const EYE_HEIGHT = 1.72;
 
 const root = document.getElementById('game');
@@ -128,8 +131,8 @@ function addBuilding(points,tags,id){
   scene.add(mesh);
 }
 
-async function fetchOSM(){
-  const q='[out:json][timeout:35];(way["highway"](around:'+LOAD_RADIUS_M+','+CENTER.lat+','+CENTER.lon+');way["building"](around:'+LOAD_RADIUS_M+','+CENTER.lat+','+CENTER.lon+'););(._;>;);out body;';
+async function fetchOSMAt(lat,lon){
+  const q='[out:json][timeout:35];(way["highway"](around:'+LOAD_RADIUS_M+','+lat+','+lon+');way["building"](around:'+LOAD_RADIUS_M+','+lat+','+lon+'););(._;>;);out body;';
   const endpoints=[
     'https://overpass-api.de/api/interpreter',
     'https://overpass.kumi.systems/api/interpreter',
@@ -152,16 +155,30 @@ function buildFromOSM(data){
   let roads=0, buildings=0;
   for(const e of data.elements){
     if(e.type!=='way'||!e.nodes||!e.tags) continue;
+    if(renderedWays.has(e.id)) continue;
+    renderedWays.add(e.id);
     const pts=e.nodes.map(id=>nodes.get(id)).filter(Boolean).map(n=>toXY(n.lat,n.lon));
     if(e.tags.highway){addRoad(pts,e.tags);roads++;}
     else if(e.tags.building){addBuilding(pts,e.tags,e.id);buildings++;}
   }
   statusEl.textContent='تم تحميل '+roads+' طريق و '+buildings+' مبنى من بيانات الخريطة الحقيقية';
 }
-fetchOSM().then(buildFromOSM).catch(err=>{
-  console.error(err);
-  statusEl.textContent='تعذر تحميل بيانات OSM الآن — لم تتم إضافة تضاريس أو مبانٍ وهمية.';
-});
+async function streamAroundPlayer(force=false){
+  const ll=toLatLon(camera.position.x,camera.position.z);
+  const x=Math.floor(camera.position.x/STREAM_CELL_M);
+  const z=Math.floor(camera.position.z/STREAM_CELL_M);
+  const key=x+','+z;
+  if(!force && loadedCells.has(key)) return;
+  loadedCells.add(key);
+  try{
+    const data=await fetchOSMAt(ll.lat,ll.lon);
+    buildFromOSM(data);
+  }catch(err){
+    console.error(err);
+    statusEl.textContent='تعذر تحميل جزء جديد من الخريطة الآن — لن نضيف معالم مختلقة.';
+  }
+}
+streamAroundPlayer(true);
 
 function updateCoords(){
   const p=toLatLon(camera.position.x,camera.position.z);
@@ -190,6 +207,7 @@ function move(dt){
   camera.position.y=EYE_HEIGHT;
 }
 
+let lastStreamCheck=0;
 let lastTouch=null;
 renderer.domElement.addEventListener('touchstart',e=>{
   const t=e.changedTouches[0];
@@ -221,7 +239,10 @@ joy.addEventListener('touchend',()=>{joyId=null;mobileMove={x:0,y:0};stick.style
 function animate(){
   requestAnimationFrame(animate);
   const dt=Math.min(clock.getDelta(),.04);
-  move(dt);updateCoords();renderer.render(scene,camera);
+  move(dt);updateCoords();
+  lastStreamCheck+=dt;
+  if(lastStreamCheck>2.5){lastStreamCheck=0;streamAroundPlayer(false);}
+  renderer.render(scene,camera);
 }
 animate();
 
