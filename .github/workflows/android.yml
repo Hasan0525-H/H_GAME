@@ -24,12 +24,13 @@ jobs:
       - name: Generate evidence-gated overrides
         run: node scripts/build-verified-overrides.mjs
 
+      - name: Build self-contained web assets
+        run: npm run build:web
+
       - name: Prepare web assets
         run: |
           rm -rf www
-          mkdir -p www/data
-          cp index.html styles.css main.js manifest.webmanifest icon.svg sw.js www/
-          cp -r data/* www/data/
+          cp -r dist/site www
 
       - name: Create Android project
         run: npx cap add android
