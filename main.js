@@ -25,6 +25,9 @@ const coordsEl = document.getElementById('coords');
 const roadNameEl = document.getElementById('roadName');
 const nearbyFeatureEl = document.getElementById('nearbyFeature');
 const accuracyEl = document.getElementById('accuracy');
+const miniMap = document.getElementById('miniMap');
+const miniCtx = miniMap?.getContext('2d');
+const homeBtn = document.getElementById('homeBtn');
 const start = document.getElementById('start');
 const startBtn = document.getElementById('startBtn');
 
@@ -79,6 +82,8 @@ let yaw = 0;
 let pitch = 0;
 let lastStreamCheck = 0;
 let lastNearbyCheck = 0;
+let lastMiniMapDraw = 0;
+let lastPersist = 0;
 let estimatedDimensionCount = 0;
 const isCoarse = matchMedia('(pointer:coarse)').matches;
 
@@ -87,7 +92,21 @@ addEventListener('keyup', e => keys.delete(e.code));
 
 startBtn.addEventListener('click', () => {
   start.style.display = 'none';
+  restorePlayerState();
   if (!isCoarse) controls.lock();
+});
+
+homeBtn?.addEventListener('click', () => {
+  camera.position.set(0, EYE_HEIGHT, 0);
+  yaw = 0;
+  pitch = 0;
+  camera.rotation.set(0, 0, 0);
+  localStorage.removeItem('hgame_player_state');
+  didInitialSnap = false;
+  if (roadSegments.length) {
+    snapStartToNearestRoad();
+    didInitialSnap = true;
+  }
 });
 
 renderer.domElement.addEventListener('click', () => {
@@ -139,7 +158,11 @@ function roadWidth(type, tags) {
   const lanes = Math.max(0, parseFloat(tags.lanes) || 0);
   const taggedWidth = parseFloat(tags.width);
   if (Number.isFinite(taggedWidth) && taggedWidth > 1) return Math.min(taggedWidth, 20);
-  if (lanes) return Math.min(Math.max(lanes * 3.1, 3.5), 18);
+  if (lanes) {
+    estimatedDimensionCount++;
+    return Math.min(Math.max(lanes * 3.1, 3.5), 18);
+  }
+  estimatedDimensionCount++;
   return ({
     motorway: 11, trunk: 10, primary: 9, secondary: 8, tertiary: 7,
     residential: 5.7, unclassified: 5.2, service: 4.2, track: 3.2,
@@ -151,10 +174,9 @@ function roadColor(tags) {
   const surface = tags.surface || '';
   if (['dirt', 'earth', 'sand', 'ground', 'unpaved'].includes(surface)) return 0xbba67f;
   if (['gravel', 'fine_gravel'].includes(surface)) return 0xa99f8d;
-  const t = tags.highway;
-  if (['motorway', 'trunk', 'primary'].includes(t)) return 0x4e5054;
-  if (['secondary', 'tertiary'].includes(t)) return 0x5b5c60;
-  return 0x6c6a66;
+  if (['asphalt', 'paved', 'concrete'].includes(surface)) return 0x5c5d60;
+  // Surface is unknown: use a neutral material, not an asphalt claim.
+  return 0x77746e;
 }
 
 function addSegmentBox(a, b, width, height, color, y = 0.02, cast = false) {
@@ -365,10 +387,15 @@ function addWaterway(points, tags) {
   }
 }
 
-function addPowerLine(points) {
+function addPowerLine(points, tags = {}) {
   if (points.length < 2) return;
+  let h = parseFloat(tags.height);
+  if (!Number.isFinite(h)) {
+    h = 9.3;
+    estimatedDimensionCount++;
+  }
   const geom = new THREE.BufferGeometry().setFromPoints(
-    points.map(p => new THREE.Vector3(p[0], 9.3, p[1]))
+    points.map(p => new THREE.Vector3(p[0], h, p[1]))
   );
   scene.add(new THREE.Line(geom, new THREE.LineBasicMaterial({ color: 0x3f3b36 })));
 }
@@ -384,21 +411,30 @@ function cylinder(radius, height, color, x, y, z) {
   return m;
 }
 
-function addTree(x, z) {
-  cylinder(0.12, 2.15, 0x6f573c, x, 0, z);
+function addTree(x, z, tags = {}) {
+  let h = parseFloat(tags.height);
+  if (!Number.isFinite(h)) {
+    h = 4.2;
+    estimatedDimensionCount++;
+  }
+  h = Math.min(Math.max(h, 2.2), 18);
+  cylinder(0.11, Math.max(1.4, h * 0.52), 0x6f573c, x, 0, z);
   const crown = new THREE.Mesh(
-    new THREE.IcosahedronGeometry(1.35, 1),
+    new THREE.IcosahedronGeometry(Math.max(0.8, h * 0.24), 1),
     new THREE.MeshStandardMaterial({ color: 0x68744b, roughness: 1 })
   );
-  crown.scale.set(1.15, 0.95, 1.15);
-  crown.position.set(x, 2.65, z);
+  crown.position.set(x, h * 0.72, z);
   crown.castShadow = true;
   scene.add(crown);
 }
 
-function addPowerPole(x, z, tower = false) {
-  const h = tower ? 14 : 8.5;
-  cylinder(tower ? 0.13 : 0.09, h, 0x777570, x, 0, z);
+function addPowerPole(x, z, tower = false, tags = {}) {
+  let h = parseFloat(tags.height);
+  if (!Number.isFinite(h)) {
+    h = tower ? 14 : 8.5;
+    estimatedDimensionCount++;
+  }
+  cylinder(tower ? 0.13 : 0.09, Math.min(Math.max(h, 4), 40), 0x777570, x, 0, z);
 }
 
 function addStreetLamp(x, z) {
@@ -451,9 +487,9 @@ function addNodeFeature(node) {
 
   renderedNodes.add(node.id);
   const [x, z] = toXY(node.lat, node.lon);
-  if (t.natural === 'tree') addTree(x, z);
-  else if (t.power === 'pole') addPowerPole(x, z, false);
-  else if (t.power === 'tower') addPowerPole(x, z, true);
+  if (t.natural === 'tree') addTree(x, z, t);
+  else if (t.power === 'pole') addPowerPole(x, z, false, t);
+  else if (t.power === 'tower') addPowerPole(x, z, true, t);
   else if (t.highway === 'street_lamp') addStreetLamp(x, z);
 }
 
@@ -534,7 +570,7 @@ function buildFromOSM(data) {
       addWaterway(pts, e.tags);
       details++;
     } else if (e.tags.power === 'line') {
-      addPowerLine(pts);
+      addPowerLine(pts, e.tags);
       details++;
     } else if (e.tags.landuse || e.tags.leisure || e.tags.natural) {
       addArea(pts, e.tags);
@@ -668,6 +704,110 @@ function updateNearbyFeature() {
   nearbyFeatureEl.textContent = 'أقرب معلم موثق: ' + best.f.label + ' • ' + d + 'م' + kind;
 }
 
+function persistPlayerState() {
+  const ll = toLatLon(camera.position.x, camera.position.z);
+  const state = {
+    lat: ll.lat,
+    lon: ll.lon,
+    x: camera.position.x,
+    z: camera.position.z,
+    yaw: isCoarse ? yaw : camera.rotation.y,
+    pitch: isCoarse ? pitch : camera.rotation.x,
+    savedAt: Date.now()
+  };
+  try { localStorage.setItem('hgame_player_state', JSON.stringify(state)); } catch {}
+}
+
+function restorePlayerState() {
+  try {
+    const raw = localStorage.getItem('hgame_player_state');
+    if (!raw) return;
+    const s = JSON.parse(raw);
+    if (!Number.isFinite(s.x) || !Number.isFinite(s.z)) return;
+    if (Math.hypot(s.x, s.z) > 15000) return;
+    camera.position.set(s.x, EYE_HEIGHT, s.z);
+    yaw = Number.isFinite(s.yaw) ? s.yaw : 0;
+    pitch = Number.isFinite(s.pitch) ? s.pitch : 0;
+    if (isCoarse) {
+      camera.rotation.order = 'YXZ';
+      camera.rotation.y = yaw;
+      camera.rotation.x = pitch;
+    }
+  } catch {}
+}
+
+function drawMiniMap() {
+  if (!miniCtx || !miniMap) return;
+  const cssSize = Math.max(150, Math.min(220, miniMap.clientWidth || 220));
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  const px = Math.round(cssSize * dpr);
+  if (miniMap.width !== px || miniMap.height !== px) {
+    miniMap.width = px;
+    miniMap.height = px;
+  }
+  const ctx = miniCtx;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssSize, cssSize);
+  ctx.fillStyle = 'rgba(24,24,22,.82)';
+  ctx.fillRect(0, 0, cssSize, cssSize);
+
+  const radius = 260;
+  const scale = cssSize / (radius * 2);
+  const cx = cssSize / 2, cy = cssSize / 2;
+  const tx = x => cx + (x - camera.position.x) * scale;
+  const tz = z => cy + (z - camera.position.z) * scale;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, cssSize, cssSize);
+  ctx.clip();
+
+  ctx.strokeStyle = 'rgba(215,205,183,.40)';
+  ctx.lineWidth = 1;
+  for (const poly of buildingPolys) {
+    if (!poly.length) continue;
+    const near = poly.some(p => Math.abs(p[0] - camera.position.x) < radius && Math.abs(p[1] - camera.position.z) < radius);
+    if (!near) continue;
+    ctx.beginPath();
+    ctx.moveTo(tx(poly[0][0]), tz(poly[0][1]));
+    for (let i = 1; i < poly.length; i++) ctx.lineTo(tx(poly[i][0]), tz(poly[i][1]));
+    ctx.closePath();
+    ctx.stroke();
+  }
+
+  for (const r of roadSegments) {
+    const mx = (r.a[0] + r.b[0]) / 2, mz = (r.a[1] + r.b[1]) / 2;
+    if (Math.abs(mx - camera.position.x) > radius || Math.abs(mz - camera.position.z) > radius) continue;
+    ctx.strokeStyle = 'rgba(242,237,224,.78)';
+    ctx.lineWidth = Math.max(1, Math.min(5, r.width * scale));
+    ctx.beginPath();
+    ctx.moveTo(tx(r.a[0]), tz(r.a[1]));
+    ctx.lineTo(tx(r.b[0]), tz(r.b[1]));
+    ctx.stroke();
+  }
+
+  ctx.restore();
+
+  const a = isCoarse ? yaw : camera.rotation.y;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(-a);
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.moveTo(0, -10);
+  ctx.lineTo(7, 8);
+  ctx.lineTo(0, 5);
+  ctx.lineTo(-7, 8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  ctx.fillStyle = 'rgba(255,255,255,.72)';
+  ctx.font = '11px system-ui';
+  ctx.textAlign = 'center';
+  ctx.fillText('≈ 520م', cx, cssSize - 9);
+}
+
 function attemptMove(dx, dz) {
   const oldX = camera.position.x, oldZ = camera.position.z;
   const nx = oldX + dx, nz = oldZ + dz;
@@ -784,6 +924,18 @@ function animate() {
   if (lastNearbyCheck > 0.5) {
     lastNearbyCheck = 0;
     updateNearbyFeature();
+  }
+
+  lastMiniMapDraw += dt;
+  if (lastMiniMapDraw > 0.2) {
+    lastMiniMapDraw = 0;
+    drawMiniMap();
+  }
+
+  lastPersist += dt;
+  if (lastPersist > 2.0) {
+    lastPersist = 0;
+    persistPlayerState();
   }
 
   renderer.render(scene, camera);
