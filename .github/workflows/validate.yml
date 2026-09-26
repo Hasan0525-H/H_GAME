@@ -10,22 +10,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Check JavaScript syntax
         run: |
           node --check main.js
           node --check scripts/fetch-osm-snapshot.mjs
+          node --check scripts/fetch-ms-buildings.mjs
           node --check scripts/build-verified-overrides.mjs
           node --check scripts/build-web.mjs
+
       - name: Check required files
         run: test -f index.html && test -f styles.css && test -f data/reference-sources.json && test -f data/ground-truth.json && test -f data/ground-truth.schema.json && test -f data/verified-overrides.json && test -f capacitor.config.json && test -f package.json
+
       - name: Verify generated overrides are current
         run: node scripts/build-verified-overrides.mjs --check
+
       - name: Validate evidence-gated overrides
         run: |
           node -e "
           const fs=require('fs');
-          const p='data/verified-overrides.json';
-          const d=JSON.parse(fs.readFileSync(p,'utf8'));
+          const d=JSON.parse(fs.readFileSync('data/verified-overrides.json','utf8'));
           if(!Array.isArray(d.entries)) throw new Error('entries must be an array');
           for(const [i,e] of d.entries.entries()){
             if(e.verified!==true) throw new Error('entry '+i+' must have verified=true');
@@ -33,7 +37,6 @@ jobs:
             if(typeof e.source_url!=='string' || !/^https?:\/\//.test(e.source_url)) throw new Error('entry '+i+' needs source_url');
             if(!e.attributes || typeof e.attributes!=='object' || Array.isArray(e.attributes)) throw new Error('entry '+i+' needs attributes');
           }
-          console.log('verified overrides:', d.entries.length);
           "
 
       - name: Validate reference catalog isolation
@@ -47,8 +50,7 @@ jobs:
             if(!['exact','area-level','unlocated'].includes(s.geolocation_status)) throw new Error('source '+i+' has invalid geolocation_status');
             if(s.geolocation_status!=='exact' && s.applies_to_scene===true) throw new Error('area/unlocated source '+i+' cannot apply to scene');
           }
-          console.log('reference sources:', d.sources.length);
           "
 
-      - name: Verify Overture runtime loader marker
-        run: grep -q "loadOvertureBuildings" main.js
+      - name: Verify Microsoft building loader marker
+        run: grep -q "loadExternalBuildings" main.js
