@@ -20,3 +20,7 @@ button{border:0;border-radius:14px;background:#20251f;color:#fff;padding:14px 22
 #miniMap{width:220px;height:220px;border-radius:18px;background:rgba(24,24,22,.76);border:1px solid rgba(255,255,255,.15);box-shadow:0 12px 36px rgba(0,0,0,.22);backdrop-filter:blur(8px)}
 #homeBtn{margin-top:8px;width:100%;padding:9px 10px;font-size:12px;border-radius:12px;background:rgba(24,24,22,.78);pointer-events:auto}
 @media(max-width:900px),(pointer:coarse){#mapPanel{right:12px;bottom:18px;width:150px}#miniMap{width:150px;height:150px}#homeBtn{font-size:11px;padding:8px 6px}}
+
+#dataStatus{font-size:11px;opacity:.9}
+#refreshMapBtn{margin-top:6px;width:100%;padding:9px 10px;font-size:12px;border-radius:12px;background:rgba(24,24,22,.72);pointer-events:auto}
+@media(max-width:900px),(pointer:coarse){#refreshMapBtn{font-size:11px;padding:8px 6px}}
