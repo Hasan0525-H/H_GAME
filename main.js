@@ -10,6 +10,7 @@ const PLAYER_RADIUS = 0.34;
 const loadedCells = new Set();
 const renderedWays = new Set();
 const renderedNodes = new Set();
+const namedFeatureIds = new Set();
 const buildingPolys = [];
 const solidSegments = [];
 const roadSegments = [];
@@ -26,9 +27,11 @@ const roadNameEl = document.getElementById('roadName');
 const nearbyFeatureEl = document.getElementById('nearbyFeature');
 const accuracyEl = document.getElementById('accuracy');
 const sourceModeEl = document.getElementById('sourceMode');
+const dataStatusEl = document.getElementById('dataStatus');
 const miniMap = document.getElementById('miniMap');
 const miniCtx = miniMap?.getContext('2d');
 const homeBtn = document.getElementById('homeBtn');
+const refreshMapBtn = document.getElementById('refreshMapBtn');
 const start = document.getElementById('start');
 const startBtn = document.getElementById('startBtn');
 
@@ -86,6 +89,12 @@ let lastNearbyCheck = 0;
 let lastMiniMapDraw = 0;
 let lastPersist = 0;
 let estimatedDimensionCount = 0;
+const totalStats = { roads: 0, buildings: 0, details: 0 };
+let currentDataSource = 'loading';
+
+const MAP_DB_NAME = 'hgame-map-cache-v1';
+const MAP_DB_STORE = 'osm';
+const MAP_CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 const isCoarse = matchMedia('(pointer:coarse)').matches;
 
 addEventListener('keydown', e => keys.add(e.code));
@@ -111,6 +120,15 @@ homeBtn?.addEventListener('click', () => {
     snapStartToNearestRoad();
     didInitialSnap = true;
   }
+});
+
+refreshMapBtn?.addEventListener('click', async () => {
+  refreshMapBtn.disabled = true;
+  refreshMapBtn.textContent = 'جارٍ مسح النسخة المحلية...';
+  try {
+    await deleteMapCache();
+  } catch {}
+  location.reload();
 });
 
 renderer.domElement.addEventListener('click', () => {
@@ -470,7 +488,8 @@ function featureKind(tags) {
 
 function registerNamedNode(node) {
   const label = featureLabel(node.tags);
-  if (!label) return;
+  if (!label || namedFeatureIds.has(node.id)) return;
+  namedFeatureIds.add(node.id);
   const [x, z] = toXY(node.lat, node.lon);
   namedFeatures.push({
     x, z, label,
@@ -495,6 +514,63 @@ function addNodeFeature(node) {
   else if (t.power === 'pole') addPowerPole(x, z, false, t);
   else if (t.power === 'tower') addPowerPole(x, z, true, t);
   else if (t.highway === 'street_lamp') addStreetLamp(x, z);
+}
+
+function openMapDB() {
+  return new Promise((resolve, reject) => {
+    if (!('indexedDB' in self)) return reject(new Error('IndexedDB unavailable'));
+    const req = indexedDB.open(MAP_DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(MAP_DB_STORE)) db.createObjectStore(MAP_DB_STORE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function mapCacheGet(key) {
+  const db = await openMapDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(MAP_DB_STORE, 'readonly');
+    const req = tx.objectStore(MAP_DB_STORE).get(key);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+    tx.oncomplete = () => db.close();
+  });
+}
+
+async function mapCachePut(key, data) {
+  const db = await openMapDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(MAP_DB_STORE, 'readwrite');
+    tx.objectStore(MAP_DB_STORE).put({ savedAt: Date.now(), data }, key);
+    tx.oncomplete = () => { db.close(); resolve(); };
+    tx.onerror = () => { db.close(); reject(tx.error); };
+  });
+}
+
+async function deleteMapCache() {
+  return new Promise((resolve, reject) => {
+    if (!('indexedDB' in self)) return resolve();
+    const req = indexedDB.deleteDatabase(MAP_DB_NAME);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error);
+    req.onblocked = () => resolve();
+  });
+}
+
+function mapCacheKey(lat, lon) {
+  return lat.toFixed(4) + ',' + lon.toFixed(4) + ',r' + LOAD_RADIUS_M;
+}
+
+function setDataSourceStatus(source) {
+  currentDataSource = source;
+  if (!dataStatusEl) return;
+  if (source === 'live') dataStatusEl.textContent = 'بيانات الخريطة: مباشرة من OpenStreetMap';
+  else if (source === 'cache') dataStatusEl.textContent = 'بيانات الخريطة: نسخة محلية موثقة (أقل من 7 أيام)';
+  else if (source === 'stale-cache') dataStatusEl.textContent = 'بيانات الخريطة: نسخة محلية أقدم بسبب تعذر الاتصال';
+  else dataStatusEl.textContent = 'بيانات الخريطة: جارٍ التحميل...';
 }
 
 async function fetchOSMAt(lat, lon) {
@@ -523,7 +599,19 @@ async function fetchOSMAt(lat, lon) {
   ];
 
   let lastErr;
+  const cacheKey = mapCacheKey(lat, lon);
+  let cached = null;
+
+  try {
+    cached = await mapCacheGet(cacheKey);
+    if (cached && Date.now() - cached.savedAt <= MAP_CACHE_MAX_AGE) {
+      setDataSourceStatus('cache');
+      return cached.data;
+    }
+  } catch {}
+
   loadingCount++;
+  setDataSourceStatus('loading');
   statusEl.textContent = 'جاري جلب التفاصيل الحقيقية حول موقعك...';
 
   for (const ep of endpoints) {
@@ -536,6 +624,8 @@ async function fetchOSMAt(lat, lon) {
       if (!response.ok) throw new Error('HTTP ' + response.status);
       const json = await response.json();
       loadingCount--;
+      setDataSourceStatus('live');
+      mapCachePut(cacheKey, json).catch(() => {});
       return json;
     } catch (err) {
       lastErr = err;
@@ -543,6 +633,11 @@ async function fetchOSMAt(lat, lon) {
   }
 
   loadingCount--;
+  if (cached?.data) {
+    setDataSourceStatus('stale-cache');
+    return cached.data;
+  }
+
   throw lastErr || new Error('تعذر جلب الخريطة');
 }
 
@@ -582,8 +677,13 @@ function buildFromOSM(data) {
     }
   }
 
+  totalStats.roads += roads;
+  totalStats.buildings += buildings;
+  totalStats.details += details;
+
   statusEl.textContent =
-    'المحمّل من الخريطة: ' + roads + ' طريق، ' + buildings + ' مبنى، ' + details + ' عنصر موثق' +
+    'الإجمالي المحمّل: ' + totalStats.roads + ' طريق، ' + totalStats.buildings + ' مبنى، ' +
+    totalStats.details + ' عنصر موثق' +
     (unknownBuildingHeightCount ? ' • ارتفاع غير موثق: ' + unknownBuildingHeightCount : '');
 
   if (accuracyEl) {
@@ -640,6 +740,7 @@ async function streamAroundPlayer(force = false) {
   } catch (err) {
     console.error(err);
     loadedCells.delete(key);
+    setDataSourceStatus('loading');
     statusEl.textContent = 'تعذر تحميل هذا الجزء الآن؛ لم تتم إضافة أي معالم مختلقة.';
   }
 }
