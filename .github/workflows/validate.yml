@@ -11,7 +11,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check JavaScript syntax
-        run: node --check main.js
+        run: |
+          node --check main.js
+          node --check scripts/fetch-osm-snapshot.mjs
       - name: Check required files
         run: test -f index.html && test -f styles.css && test -f data/reference-sources.json && test -f data/verified-overrides.json
       - name: Validate evidence-gated overrides
