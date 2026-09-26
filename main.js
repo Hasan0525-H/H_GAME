@@ -38,6 +38,9 @@ const miniMap = document.getElementById('miniMap');
 const miniCtx = miniMap?.getContext('2d');
 const homeBtn = document.getElementById('homeBtn');
 const refreshMapBtn = document.getElementById('refreshMapBtn');
+const poiSearch = document.getElementById('poiSearch');
+const poiOptions = document.getElementById('poiOptions');
+const goPoiBtn = document.getElementById('goPoiBtn');
 const start = document.getElementById('start');
 const startBtn = document.getElementById('startBtn');
 
@@ -138,6 +141,35 @@ refreshMapBtn?.addEventListener('click', async () => {
     await deleteMapCache();
   } catch {}
   location.reload();
+});
+
+goPoiBtn?.addEventListener('click', async () => {
+  const query = (poiSearch?.value || '').trim();
+  if (!query) return;
+
+  const exact = namedFeatures.find(f => f.label === query);
+  const partial = namedFeatures.find(f => f.label.toLowerCase().includes(query.toLowerCase()));
+  const target = exact || partial;
+  if (!target) {
+    if (nearbyFeatureEl) nearbyFeatureEl.textContent = 'لم يتم العثور على هذا المعلم ضمن البيانات المحمّلة';
+    return;
+  }
+
+  let hit = nearestRoadPoint(target.x, target.z, 700);
+  if (!hit) {
+    camera.position.set(target.x, EYE_HEIGHT, target.z);
+    await streamAroundPlayer(true);
+    hit = nearestRoadPoint(target.x, target.z, 700);
+  }
+
+  if (hit) {
+    camera.position.set(hit.x, EYE_HEIGHT, hit.z);
+    faceAlongRoad(hit);
+    if (nearbyFeatureEl) nearbyFeatureEl.textContent = 'تم الانتقال قرب: ' + target.label;
+    streamAroundPlayer(true);
+  } else if (nearbyFeatureEl) {
+    nearbyFeatureEl.textContent = 'المعلم موثق لكن لا يوجد طريق محمّل قريب منه';
+  }
 });
 
 renderer.domElement.addEventListener('click', () => {
@@ -575,6 +607,23 @@ function registerNamedNode(node) {
   });
 }
 
+function refreshPoiOptions() {
+  if (!poiOptions) return;
+  const current = poiSearch?.value || '';
+  const unique = [...namedFeatures]
+    .sort((a, b) => a.label.localeCompare(b.label, 'ar'))
+    .slice(0, 500);
+
+  poiOptions.innerHTML = '';
+  for (const f of unique) {
+    const opt = document.createElement('option');
+    opt.value = f.label;
+    opt.label = f.kind ? f.label + ' — ' + f.kind : f.label;
+    poiOptions.appendChild(opt);
+  }
+  if (poiSearch) poiSearch.value = current;
+}
+
 function registerNamedWay(way, points) {
   const label = featureLabel(way.tags);
   const key = 'way/' + way.id;
@@ -798,6 +847,7 @@ function buildFromOSM(data) {
   if (poiCountEl) {
     poiCountEl.textContent = 'المعالم المسماة المحمّلة: ' + namedFeatures.length;
   }
+  refreshPoiOptions();
 
   if (!didInitialSnap && roadSegments.length) {
     snapStartToNearestRoad();
@@ -814,19 +864,37 @@ function closestPointOnSegment(px, pz, a, b) {
   return { x, z, d2: (px - x) ** 2 + (pz - z) ** 2, t };
 }
 
-function snapStartToNearestRoad() {
+function nearestRoadPoint(x, z, maxDistance = Infinity) {
   let best = null;
   for (const s of roadSegments) {
-    const p = closestPointOnSegment(0, 0, s.a, s.b);
+    const p = closestPointOnSegment(x, z, s.a, s.b);
     if (!best || p.d2 < best.d2) best = { ...p, s };
   }
-  if (!best || best.d2 > 250 * 250) return;
+  if (!best || best.d2 > maxDistance * maxDistance) return null;
+  return best;
+}
+
+function faceAlongRoad(hit) {
+  if (!hit?.s) return;
+  const dx = hit.s.b[0] - hit.s.a[0];
+  const dz = hit.s.b[1] - hit.s.a[1];
+  yaw = Math.atan2(-dx, -dz);
+  pitch = 0;
+  if (isCoarse) {
+    camera.rotation.order = 'YXZ';
+    camera.rotation.y = yaw;
+    camera.rotation.x = 0;
+  } else {
+    camera.rotation.set(0, yaw, 0);
+  }
+}
+
+function snapStartToNearestRoad() {
+  const best = nearestRoadPoint(0, 0, 250);
+  if (!best) return;
   camera.position.x = best.x;
   camera.position.z = best.z;
-  const dx = best.s.b[0] - best.s.a[0];
-  const dz = best.s.b[1] - best.s.a[1];
-  yaw = Math.atan2(-dx, -dz);
-  if (isCoarse) camera.rotation.y = yaw;
+  faceAlongRoad(best);
 }
 
 async function streamAroundPlayer(force = false) {
