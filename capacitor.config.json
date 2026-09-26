@@ -1,0 +1,8 @@
+{
+  "appId": "com.hasan0525.hgame",
+  "appName": "سعيدة الصوالحة",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  }
+}
