@@ -56,6 +56,7 @@
       <datalist id="poiOptions"></datalist>
       <button id="goPoiBtn" type="button">حدد مسار مشي للمعلم</button>
       <button id="clearRouteBtn" type="button">إلغاء المسار</button>
+      <button id="inspectBtn" type="button">افحص العنصر أمامك</button>
       <span id="routeStatus">المسار: غير محدد</span>
     </div>
   </div>
@@ -64,6 +65,14 @@
     <div id="joystick"><div id="stick"></div></div>
   </div>
 
+  <div id="inspectPanel" class="inspect-panel" hidden>
+    <div class="inspect-head">
+      <strong id="inspectTitle">عنصر موثق</strong>
+      <button id="inspectCloseBtn" type="button" aria-label="إغلاق">×</button>
+    </div>
+    <div id="inspectBody"></div>
+    <button id="copyCoordsBtn" type="button">نسخ إحداثيات موقعي</button>
+  </div>
   <div id="attribution">© OpenStreetMap contributors</div>
 
   <script type="module" src="./main.js"></script>
