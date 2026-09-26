@@ -13,6 +13,8 @@ const renderedNodes = new Set();
 const buildingPolys = [];
 const solidSegments = [];
 const roadSegments = [];
+const namedFeatures = [];
+const barrierGateNodes = new Map();
 let didInitialSnap = false;
 let unknownBuildingHeightCount = 0;
 let loadingCount = 0;
@@ -21,6 +23,8 @@ const root = document.getElementById('game');
 const statusEl = document.getElementById('status');
 const coordsEl = document.getElementById('coords');
 const roadNameEl = document.getElementById('roadName');
+const nearbyFeatureEl = document.getElementById('nearbyFeature');
+const accuracyEl = document.getElementById('accuracy');
 const start = document.getElementById('start');
 const startBtn = document.getElementById('startBtn');
 
@@ -74,6 +78,8 @@ let mobileMove = { x: 0, y: 0 };
 let yaw = 0;
 let pitch = 0;
 let lastStreamCheck = 0;
+let lastNearbyCheck = 0;
+let estimatedDimensionCount = 0;
 const isCoarse = matchMedia('(pointer:coarse)').matches;
 
 addEventListener('keydown', e => keys.add(e.code));
@@ -302,15 +308,48 @@ function barrierHeight(tags) {
   return 1.1;
 }
 
-function addBarrier(points, tags) {
+function gateGapWidth(node) {
+  const explicit = parseFloat(node?.tags?.width);
+  if (Number.isFinite(explicit) && explicit > 0) return Math.min(explicit, 8);
+  estimatedDimensionCount++;
+  return 1.2;
+}
+
+function trimSegmentForGate(a, b, startGate, endGate) {
+  const dx = b[0] - a[0], dz = b[1] - a[1];
+  const len = Math.hypot(dx, dz);
+  if (len < 0.5) return null;
+  const ux = dx / len, uz = dz / len;
+  let trimA = startGate ? gateGapWidth(startGate) / 2 : 0;
+  let trimB = endGate ? gateGapWidth(endGate) / 2 : 0;
+  if (trimA + trimB >= len - 0.2) return null;
+  return {
+    a: [a[0] + ux * trimA, a[1] + uz * trimA],
+    b: [b[0] - ux * trimB, b[1] - uz * trimB]
+  };
+}
+
+function addBarrier(points, tags, nodeIds, nodes) {
   if (points.length < 2) return;
   const h = barrierHeight(tags);
   const fence = tags.barrier === 'fence';
   const color = fence ? 0x77736a : 0xbca98a;
   const width = fence ? 0.055 : 0.18;
+
   for (let i = 0; i < points.length - 1; i++) {
-    addSegmentBox(points[i], points[i + 1], width, h, color, 0, true);
-    solidSegments.push({ a: points[i], b: points[i + 1], r: PLAYER_RADIUS + width * 0.5 });
+    const startNode = nodes.get(nodeIds[i]);
+    const endNode = nodes.get(nodeIds[i + 1]);
+    const startGate = startNode && /gate/.test(startNode.tags?.barrier || '') ? startNode : null;
+    const endGate = endNode && /gate/.test(endNode.tags?.barrier || '') ? endNode : null;
+    const trimmed = trimSegmentForGate(points[i], points[i + 1], startGate, endGate);
+    if (!trimmed) continue;
+
+    addSegmentBox(trimmed.a, trimmed.b, width, h, color, 0, true);
+    solidSegments.push({
+      a: trimmed.a,
+      b: trimmed.b,
+      r: PLAYER_RADIUS + width * 0.5
+    });
   }
 }
 
@@ -372,11 +411,44 @@ function addStreetLamp(x, z) {
   scene.add(head);
 }
 
+function featureLabel(tags) {
+  if (!tags) return '';
+  return tags['name:ar'] || tags.name || tags.operator || tags.brand || '';
+}
+
+function featureKind(tags) {
+  if (!tags) return '';
+  if (tags.amenity) return tags.amenity;
+  if (tags.shop) return 'shop:' + tags.shop;
+  if (tags.place) return 'place:' + tags.place;
+  if (tags.tourism) return 'tourism:' + tags.tourism;
+  if (tags.barrier) return 'barrier:' + tags.barrier;
+  if (tags.power) return 'power:' + tags.power;
+  if (tags.natural) return 'natural:' + tags.natural;
+  return '';
+}
+
+function registerNamedNode(node) {
+  const label = featureLabel(node.tags);
+  if (!label) return;
+  const [x, z] = toXY(node.lat, node.lon);
+  namedFeatures.push({
+    x, z, label,
+    kind: featureKind(node.tags),
+    osm: 'node/' + node.id
+  });
+}
+
 function addNodeFeature(node) {
   if (!node.tags) return;
-  if (renderedNodes.has(node.id)) return;
+  registerNamedNode(node);
+
   const t = node.tags;
+  if (/gate/.test(t.barrier || '')) barrierGateNodes.set(node.id, node);
+
+  if (renderedNodes.has(node.id)) return;
   if (!(t.natural === 'tree' || t.power === 'pole' || t.power === 'tower' || t.highway === 'street_lamp')) return;
+
   renderedNodes.add(node.id);
   const [x, z] = toXY(node.lat, node.lon);
   if (t.natural === 'tree') addTree(x, z);
@@ -399,6 +471,9 @@ async function fetchOSMAt(lat, lon) {
     'node["natural"="tree"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
     'node["power"~"pole|tower"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
     'node["highway"="street_lamp"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
+    'node["barrier"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
+    'node["name"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
+    'node["addr:housenumber"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
     ');(._;>;);out body;';
 
   const endpoints = [
@@ -453,7 +528,7 @@ function buildFromOSM(data) {
       addBuilding(pts, e.tags, e.id);
       buildings++;
     } else if (e.tags.barrier) {
-      addBarrier(pts, e.tags);
+      addBarrier(pts, e.tags, e.nodes, nodes);
       details++;
     } else if (e.tags.waterway) {
       addWaterway(pts, e.tags);
@@ -470,6 +545,12 @@ function buildFromOSM(data) {
   statusEl.textContent =
     'المحمّل من الخريطة: ' + roads + ' طريق، ' + buildings + ' مبنى، ' + details + ' عنصر موثق' +
     (unknownBuildingHeightCount ? ' • ارتفاع غير موثق: ' + unknownBuildingHeightCount : '');
+
+  if (accuracyEl) {
+    accuracyEl.textContent =
+      'وضع الدقة: لا عناصر عشوائية' +
+      (estimatedDimensionCount ? ' • أبعاد محايدة تقديرية: ' + estimatedDimensionCount : '');
+  }
 
   if (!didInitialSnap && roadSegments.length) {
     snapStartToNearestRoad();
@@ -563,6 +644,28 @@ function updateCoords() {
   } else {
     roadNameEl.textContent = 'الطريق: غير مسمّى في البيانات';
   }
+}
+
+function updateNearbyFeature() {
+  if (!nearbyFeatureEl || !namedFeatures.length) {
+    if (nearbyFeatureEl) nearbyFeatureEl.textContent = 'أقرب معلم موثق: لا يوجد اسم قريب في البيانات';
+    return;
+  }
+
+  let best = null;
+  for (const f of namedFeatures) {
+    const d2 = (camera.position.x - f.x) ** 2 + (camera.position.z - f.z) ** 2;
+    if (!best || d2 < best.d2) best = { d2, f };
+  }
+
+  if (!best || best.d2 > 220 * 220) {
+    nearbyFeatureEl.textContent = 'أقرب معلم موثق: لا يوجد اسم ضمن 220م';
+    return;
+  }
+
+  const d = Math.round(Math.sqrt(best.d2));
+  const kind = best.f.kind ? ' • ' + best.f.kind : '';
+  nearbyFeatureEl.textContent = 'أقرب معلم موثق: ' + best.f.label + ' • ' + d + 'م' + kind;
 }
 
 function attemptMove(dx, dz) {
@@ -675,6 +778,12 @@ function animate() {
   if (lastStreamCheck > 2.25) {
     lastStreamCheck = 0;
     streamAroundPlayer(false);
+  }
+
+  lastNearbyCheck += dt;
+  if (lastNearbyCheck > 0.5) {
+    lastNearbyCheck = 0;
+    updateNearbyFeature();
   }
 
   renderer.render(scene, camera);
