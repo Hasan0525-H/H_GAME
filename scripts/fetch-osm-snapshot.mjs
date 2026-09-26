@@ -2,6 +2,7 @@ import { writeFile, mkdir } from 'node:fs/promises';
 
 const CENTER = { lat: 18.58979, lon: 41.4123419 };
 const RADIUS_M = 3500;
+const required = process.argv.includes('--required');
 const endpoints = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
@@ -56,7 +57,9 @@ for (const endpoint of endpoints) {
 }
 
 if (!data) {
-  console.warn('No bundled OSM snapshot produced; package remains usable with live OSM.');
+  const message = 'No bundled OSM snapshot produced from any Overpass endpoint.';
+  if (required) throw new Error(message);
+  console.warn(message + ' Package remains usable with live OSM.');
   process.exit(0);
 }
 
