@@ -17,6 +17,7 @@ const solidSegments = [];
 const roadSegments = [];
 const collisionCells = new Map();
 const verifiedOverrides = new Map();
+let referenceCatalog = [];
 const namedFeatures = [];
 const inspectables = [];
 const raycaster = new THREE.Raycaster();
@@ -32,6 +33,7 @@ const roadNameEl = document.getElementById('roadName');
 const nearbyFeatureEl = document.getElementById('nearbyFeature');
 const accuracyEl = document.getElementById('accuracy');
 const sourceModeEl = document.getElementById('sourceMode');
+const referenceCountEl = document.getElementById('referenceCount');
 const dataStatusEl = document.getElementById('dataStatus');
 const headingEl = document.getElementById('heading');
 const walkedEl = document.getElementById('walked');
@@ -339,6 +341,13 @@ function inspectRows(meta) {
   push('النوع', meta?.type);
   push('الاسم', tags['name:ar'] || tags.name);
   push('المرجع', tags.ref);
+  push('العنوان', featureLabel({
+    'addr:housenumber': tags['addr:housenumber'],
+    'addr:street': tags['addr:street'],
+    'addr:place': tags['addr:place']
+  }));
+  push('حالة المرجع الأرضي', meta?.groundVerified ? 'مطابق بمرجع أرضي' : 'بيانات خريطة فقط');
+  push('رابط المرجع الأرضي', meta?.verifiedSource);
 
   if (meta?.type === 'road') {
     push('تصنيف الطريق', tags.highway);
@@ -467,10 +476,14 @@ function parseColor(value, fallback) {
   return fallback;
 }
 
-function verifiedAttributes(type, id) {
+function verifiedRecord(type, id) {
   const item = verifiedOverrides.get(type + '/' + id);
   if (!item || item.verified !== true || !item.source_url || !item.attributes) return null;
-  return item.attributes;
+  return item;
+}
+
+function verifiedAttributes(type, id) {
+  return verifiedRecord(type, id)?.attributes || null;
 }
 
 async function loadVerifiedOverrides() {
@@ -484,6 +497,25 @@ async function loadVerifiedOverrides() {
       }
     }
   } catch {}
+}
+
+async function loadReferenceCatalog() {
+  try {
+    const response = await fetch('./data/reference-sources.json', { cache: 'no-store' });
+    if (!response.ok) throw new Error('reference catalog unavailable');
+    const json = await response.json();
+    referenceCatalog = Array.isArray(json.sources) ? json.sources : [];
+    const exact = referenceCatalog.filter(x => x.geolocation_status === 'exact').length;
+    const area = referenceCatalog.filter(x => x.geolocation_status === 'area-level').length;
+    if (referenceCountEl) {
+      referenceCountEl.textContent =
+        'المراجع المحفوظة: ' + referenceCatalog.length +
+        ' • مطابق مكانيًا: ' + exact +
+        ' • مرجع عام: ' + area;
+    }
+  } catch {
+    if (referenceCountEl) referenceCountEl.textContent = 'المراجع المحفوظة: تعذر قراءة الفهرس';
+  }
 }
 
 function roadWidth(type, tags) {
@@ -546,7 +578,8 @@ function isWalkableRoad(tags) {
 
 function addRoad(points, tags, id) {
   if (points.length < 2) return;
-  const override = verifiedAttributes('way', id);
+  const overrideRecord = verifiedRecord('way', id);
+  const override = overrideRecord?.attributes || null;
   const effectiveTags = override ? { ...tags, ...override } : tags;
   const width = roadWidth(effectiveTags.highway, effectiveTags);
   const color = roadColor(effectiveTags);
@@ -561,7 +594,9 @@ function addRoad(points, tags, id) {
     addSegmentBox(a, b, width, 0.035, color, 0.005, false, {
       osm: 'way/' + id,
       type: 'road',
-      tags: effectiveTags
+      tags: effectiveTags,
+      groundVerified: !!overrideRecord,
+      verifiedSource: overrideRecord?.source_url || ''
     });
     roadSegments.push({
       a, b, width, highway: effectiveTags.highway,
@@ -660,7 +695,8 @@ function registerSolidPolygon(points) {
 
 function addBuilding(points, tags, id) {
   if (points.length < 4 || !isClosed(points)) return;
-  const override = verifiedAttributes('way', id);
+  const overrideRecord = verifiedRecord('way', id);
+  const override = overrideRecord?.attributes || null;
   const effectiveTags = override ? { ...tags, ...override } : tags;
   const heightInfo = heightFromTags(effectiveTags);
   const height = heightInfo.value;
@@ -684,7 +720,9 @@ function addBuilding(points, tags, id) {
     osm: 'way/' + id,
     type: 'building',
     tags: effectiveTags,
-    heightKnown: heightInfo.exact
+    heightKnown: heightInfo.exact,
+    groundVerified: !!overrideRecord,
+    verifiedSource: overrideRecord?.source_url || ''
   });
   registerSolidPolygon(points);
 
@@ -861,11 +899,20 @@ function addStreetLamp(x, z) {
 
 function featureLabel(tags) {
   if (!tags) return '';
-  return tags['name:ar'] || tags.name || tags.operator || tags.brand || '';
+  const named = tags['name:ar'] || tags.name || tags.operator || tags.brand;
+  if (named) return named;
+
+  const house = tags['addr:housenumber'] || '';
+  const street = tags['addr:street'] || tags['addr:place'] || '';
+  if (house || street) return [street, house].filter(Boolean).join(' ');
+
+  return '';
 }
 
 function featureKind(tags) {
   if (!tags) return '';
+  if (tags.entrance) return 'entrance:' + tags.entrance;
+  if (tags['addr:housenumber']) return 'address';
   if (tags.amenity) return tags.amenity;
   if (tags.shop) return 'shop:' + tags.shop;
   if (tags.place) return 'place:' + tags.place;
@@ -1013,6 +1060,7 @@ async function fetchOSMAt(lat, lon) {
     'node["barrier"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
     'node["name"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
     'node["addr:housenumber"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
+    'node["entrance"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
     'node["amenity"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
     'node["shop"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
     'node["tourism"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
@@ -1618,7 +1666,7 @@ joy.addEventListener('touchend', () => {
   stick.style.transform = 'translate(0,0)';
 });
 
-loadVerifiedOverrides().finally(() => streamAroundPlayer(true));
+Promise.all([loadVerifiedOverrides(), loadReferenceCatalog()]).finally(() => streamAroundPlayer(true));
 
 function animate() {
   requestAnimationFrame(animate);
