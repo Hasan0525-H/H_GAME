@@ -1,0 +1,23 @@
+name: Package game
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate JavaScript
+        run: node --check main.js
+      - name: Build portable ZIP
+        run: |
+          mkdir -p dist
+          zip -r dist/H_GAME-web.zip index.html styles.css main.js manifest.webmanifest icon.svg sw.js data
+      - uses: actions/upload-artifact@v4
+        with:
+          name: H_GAME-web
+          path: dist/H_GAME-web.zip
+          if-no-files-found: error
