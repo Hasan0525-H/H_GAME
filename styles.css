@@ -62,3 +62,6 @@ button{border:0;border-radius:14px;background:#20251f;color:#fff;padding:14px 22
 @media(max-width:900px),(pointer:coarse){#inspectBtn{font-size:10px}.inspect-panel{bottom:182px;left:10px;width:min(300px,calc(100vw - 20px))}}
 
 #referenceCount{font-size:11px;opacity:.9}
+
+.inspect-link{display:block;margin-top:8px;color:#fff;text-decoration:none;background:rgba(255,255,255,.1);padding:9px 10px;border-radius:10px;text-align:center;font-size:11px}
+.inspect-link[hidden]{display:none}
