@@ -1,5 +1,5 @@
 {
   "schema_version": 1,
-  "description": "Only add entries when an OSM object has been matched to a reliable ground-level photo/video or other strong reference. The runtime ignores entries unless verified=true and source_url is present.",
+  "description": "Generated from data/ground-truth.json. Do not hand-edit.",
   "entries": []
 }
