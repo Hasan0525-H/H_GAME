@@ -6,6 +6,7 @@ const LOAD_RADIUS_M = 1700;
 const STREAM_CELL_M = 1250;
 const EYE_HEIGHT = 1.72;
 const PLAYER_RADIUS = 0.34;
+const COLLISION_CELL_M = 80;
 
 const loadedCells = new Set();
 const renderedWays = new Set();
@@ -14,6 +15,8 @@ const namedFeatureIds = new Set();
 const buildingPolys = [];
 const solidSegments = [];
 const roadSegments = [];
+const collisionCells = new Map();
+const verifiedOverrides = new Map();
 const namedFeatures = [];
 const barrierGateNodes = new Map();
 let didInitialSnap = false;
@@ -28,6 +31,7 @@ const nearbyFeatureEl = document.getElementById('nearbyFeature');
 const accuracyEl = document.getElementById('accuracy');
 const sourceModeEl = document.getElementById('sourceMode');
 const dataStatusEl = document.getElementById('dataStatus');
+const headingEl = document.getElementById('heading');
 const miniMap = document.getElementById('miniMap');
 const miniCtx = miniMap?.getContext('2d');
 const homeBtn = document.getElementById('homeBtn');
@@ -176,6 +180,25 @@ function parseColor(value, fallback) {
   return fallback;
 }
 
+function verifiedAttributes(type, id) {
+  const item = verifiedOverrides.get(type + '/' + id);
+  if (!item || item.verified !== true || !item.source_url || !item.attributes) return null;
+  return item.attributes;
+}
+
+async function loadVerifiedOverrides() {
+  try {
+    const response = await fetch('./data/verified-overrides.json', { cache: 'no-store' });
+    if (!response.ok) return;
+    const json = await response.json();
+    for (const item of json.entries || []) {
+      if (item?.osm && item.verified === true && item.source_url && item.attributes) {
+        verifiedOverrides.set(item.osm, item);
+      }
+    }
+  } catch {}
+}
+
 function roadWidth(type, tags) {
   const lanes = Math.max(0, parseFloat(tags.lanes) || 0);
   const taggedWidth = parseFloat(tags.width);
@@ -217,11 +240,13 @@ function addSegmentBox(a, b, width, height, color, y = 0.02, cast = false) {
   return mesh;
 }
 
-function addRoad(points, tags) {
+function addRoad(points, tags, id) {
   if (points.length < 2) return;
-  const width = roadWidth(tags.highway, tags);
-  const color = roadColor(tags);
-  const paved = !['dirt', 'earth', 'sand', 'ground', 'unpaved', 'gravel', 'fine_gravel'].includes(tags.surface || '');
+  const override = verifiedAttributes('way', id);
+  const effectiveTags = override ? { ...tags, ...override } : tags;
+  const width = roadWidth(effectiveTags.highway, effectiveTags);
+  const color = roadColor(effectiveTags);
+  const paved = !['dirt', 'earth', 'sand', 'ground', 'unpaved', 'gravel', 'fine_gravel'].includes(effectiveTags.surface || '');
 
   for (let i = 0; i < points.length - 1; i++) {
     const a = points[i], b = points[i + 1];
@@ -231,23 +256,23 @@ function addRoad(points, tags) {
 
     addSegmentBox(a, b, width, 0.035, color, 0.005, false);
     roadSegments.push({
-      a, b, width, highway: tags.highway,
-      name: tags.name || tags['name:ar'] || '',
-      ref: tags.ref || ''
+      a, b, width, highway: effectiveTags.highway,
+      name: effectiveTags.name || effectiveTags['name:ar'] || '',
+      ref: effectiveTags.ref || ''
     });
 
     // Do not invent painted lane markings. Render only when the map explicitly says they exist.
     const explicitMarkings =
-      tags.lane_markings === 'yes' ||
-      tags['centre_line'] === 'yes' ||
-      tags['center_line'] === 'yes';
+      effectiveTags.lane_markings === 'yes' ||
+      effectiveTags['centre_line'] === 'yes' ||
+      effectiveTags['center_line'] === 'yes';
     if (paved && explicitMarkings) {
       const line = addSegmentBox(a, b, 0.11, 0.012, 0xe8dfbd, 0.038, false);
       if (line) line.material.roughness = 0.82;
     }
 
     // Sidewalks are drawn only when explicitly mapped, on the mapped side.
-    const sidewalk = tags.sidewalk;
+    const sidewalk = effectiveTags.sidewalk;
     if (sidewalk && sidewalk !== 'no' && sidewalk !== 'separate') {
       const offset = width / 2 + 0.8;
       const px = (-dz / len) * offset, pz = (dx / len) * offset;
@@ -273,18 +298,62 @@ function heightFromTags(tags) {
   return { value: 3.2, exact: false };
 }
 
+function collisionCellKey(cx, cz) {
+  return cx + ',' + cz;
+}
+
+function getCollisionBucket(cx, cz, create = false) {
+  const key = collisionCellKey(cx, cz);
+  let bucket = collisionCells.get(key);
+  if (!bucket && create) {
+    bucket = { polys: [], segments: [] };
+    collisionCells.set(key, bucket);
+  }
+  return bucket || null;
+}
+
+function indexPolygon(poly) {
+  let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
+  for (const p of poly) {
+    minX = Math.min(minX, p[0]); minZ = Math.min(minZ, p[1]);
+    maxX = Math.max(maxX, p[0]); maxZ = Math.max(maxZ, p[1]);
+  }
+  const x0 = Math.floor(minX / COLLISION_CELL_M), x1 = Math.floor(maxX / COLLISION_CELL_M);
+  const z0 = Math.floor(minZ / COLLISION_CELL_M), z1 = Math.floor(maxZ / COLLISION_CELL_M);
+  for (let cx = x0; cx <= x1; cx++) {
+    for (let cz = z0; cz <= z1; cz++) getCollisionBucket(cx, cz, true).polys.push(poly);
+  }
+}
+
+function indexSolidSegment(segment) {
+  const minX = Math.min(segment.a[0], segment.b[0]) - segment.r;
+  const maxX = Math.max(segment.a[0], segment.b[0]) + segment.r;
+  const minZ = Math.min(segment.a[1], segment.b[1]) - segment.r;
+  const maxZ = Math.max(segment.a[1], segment.b[1]) + segment.r;
+  const x0 = Math.floor(minX / COLLISION_CELL_M), x1 = Math.floor(maxX / COLLISION_CELL_M);
+  const z0 = Math.floor(minZ / COLLISION_CELL_M), z1 = Math.floor(maxZ / COLLISION_CELL_M);
+  for (let cx = x0; cx <= x1; cx++) {
+    for (let cz = z0; cz <= z1; cz++) getCollisionBucket(cx, cz, true).segments.push(segment);
+  }
+}
+
 function registerSolidPolygon(points) {
   const poly = points.slice(0, isClosed(points) ? -1 : points.length);
   if (poly.length < 3) return;
   buildingPolys.push(poly);
+  indexPolygon(poly);
   for (let i = 0; i < poly.length; i++) {
-    solidSegments.push({ a: poly[i], b: poly[(i + 1) % poly.length], r: PLAYER_RADIUS });
+    const segment = { a: poly[i], b: poly[(i + 1) % poly.length], r: PLAYER_RADIUS };
+    solidSegments.push(segment);
+    indexSolidSegment(segment);
   }
 }
 
 function addBuilding(points, tags, id) {
   if (points.length < 4 || !isClosed(points)) return;
-  const heightInfo = heightFromTags(tags);
+  const override = verifiedAttributes('way', id);
+  const effectiveTags = override ? { ...tags, ...override } : tags;
+  const heightInfo = heightFromTags(effectiveTags);
   const height = heightInfo.value;
   const geo = new THREE.ExtrudeGeometry(makeShape(points), {
     depth: height,
@@ -293,7 +362,7 @@ function addBuilding(points, tags, id) {
   });
   geo.rotateX(-Math.PI / 2);
 
-  const baseColor = parseColor(tags['building:colour'], 0xd8cbb2);
+  const baseColor = parseColor(effectiveTags['building:colour'], 0xd8cbb2);
   const mesh = new THREE.Mesh(
     geo,
     new THREE.MeshStandardMaterial({ color: baseColor, roughness: 0.91 })
@@ -389,11 +458,13 @@ function addBarrier(points, tags, nodeIds, nodes) {
     if (!trimmed) continue;
 
     addSegmentBox(trimmed.a, trimmed.b, width, h, color, 0, true);
-    solidSegments.push({
+    const segment = {
       a: trimmed.a,
       b: trimmed.b,
       r: PLAYER_RADIUS + width * 0.5
-    });
+    };
+    solidSegments.push(segment);
+    indexSolidSegment(segment);
   }
 }
 
@@ -657,7 +728,7 @@ function buildFromOSM(data) {
     renderedWays.add(e.id);
 
     if (e.tags.highway) {
-      addRoad(pts, e.tags);
+      addRoad(pts, e.tags, e.id);
       roads++;
     } else if (e.tags.building) {
       addBuilding(pts, e.tags, e.id);
@@ -762,11 +833,28 @@ function distanceToSegment(x, z, a, b) {
 }
 
 function collides(x, z) {
-  for (const poly of buildingPolys) {
-    if (pointInPoly(x, z, poly)) return true;
-  }
-  for (const s of solidSegments) {
-    if (distanceToSegment(x, z, s.a, s.b) < s.r) return true;
+  const cx = Math.floor(x / COLLISION_CELL_M);
+  const cz = Math.floor(z / COLLISION_CELL_M);
+  const seenPolys = new Set();
+  const seenSegments = new Set();
+
+  for (let ox = -1; ox <= 1; ox++) {
+    for (let oz = -1; oz <= 1; oz++) {
+      const bucket = getCollisionBucket(cx + ox, cz + oz, false);
+      if (!bucket) continue;
+
+      for (const poly of bucket.polys) {
+        if (seenPolys.has(poly)) continue;
+        seenPolys.add(poly);
+        if (pointInPoly(x, z, poly)) return true;
+      }
+
+      for (const s of bucket.segments) {
+        if (seenSegments.has(s)) continue;
+        seenSegments.add(s);
+        if (distanceToSegment(x, z, s.a, s.b) < s.r) return true;
+      }
+    }
   }
   return false;
 }
@@ -774,6 +862,14 @@ function collides(x, z) {
 function updateCoords() {
   const p = toLatLon(camera.position.x, camera.position.z);
   coordsEl.textContent = p.lat.toFixed(6) + ', ' + p.lon.toFixed(6);
+
+  if (headingEl) {
+    const a = isCoarse ? yaw : camera.rotation.y;
+    const deg = ((-a * 180 / Math.PI) % 360 + 360) % 360;
+    const dirs = ['شمال','شمال شرق','شرق','جنوب شرق','جنوب','جنوب غرب','غرب','شمال غرب'];
+    const dir = dirs[Math.round(deg / 45) % 8];
+    headingEl.textContent = 'الاتجاه: ' + dir + ' • ' + Math.round(deg) + '°';
+  }
 
   if (!roadNameEl || !roadSegments.length) return;
   let best = null;
@@ -910,9 +1006,18 @@ function drawMiniMap() {
   ctx.fill();
   ctx.restore();
 
+  for (const f of namedFeatures) {
+    if (Math.abs(f.x - camera.position.x) > radius || Math.abs(f.z - camera.position.z) > radius) continue;
+    ctx.fillStyle = 'rgba(255,255,255,.86)';
+    ctx.beginPath();
+    ctx.arc(tx(f.x), tz(f.z), 2.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
   ctx.fillStyle = 'rgba(255,255,255,.72)';
   ctx.font = '11px system-ui';
   ctx.textAlign = 'center';
+  ctx.fillText('N', cx, 13);
   ctx.fillText('≈ 520م', cx, cssSize - 9);
 }
 
@@ -1014,7 +1119,7 @@ joy.addEventListener('touchend', () => {
   stick.style.transform = 'translate(0,0)';
 });
 
-streamAroundPlayer(true);
+loadVerifiedOverrides().finally(() => streamAroundPlayer(true));
 
 function animate() {
   requestAnimationFrame(animate);
