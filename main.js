@@ -18,6 +18,8 @@ const roadSegments = [];
 const collisionCells = new Map();
 const verifiedOverrides = new Map();
 const namedFeatures = [];
+const inspectables = [];
+const raycaster = new THREE.Raycaster();
 const barrierGateNodes = new Map();
 let didInitialSnap = false;
 let unknownBuildingHeightCount = 0;
@@ -43,6 +45,12 @@ const poiOptions = document.getElementById('poiOptions');
 const goPoiBtn = document.getElementById('goPoiBtn');
 const clearRouteBtn = document.getElementById('clearRouteBtn');
 const routeStatusEl = document.getElementById('routeStatus');
+const inspectBtn = document.getElementById('inspectBtn');
+const inspectPanel = document.getElementById('inspectPanel');
+const inspectTitleEl = document.getElementById('inspectTitle');
+const inspectBodyEl = document.getElementById('inspectBody');
+const inspectCloseBtn = document.getElementById('inspectCloseBtn');
+const copyCoordsBtn = document.getElementById('copyCoordsBtn');
 const navGuideEl = document.getElementById('navGuide');
 const navArrowEl = document.getElementById('navArrow');
 const navInstructionEl = document.getElementById('navInstruction');
@@ -115,7 +123,10 @@ const MAP_DB_STORE = 'osm';
 const MAP_CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 const isCoarse = matchMedia('(pointer:coarse)').matches;
 
-addEventListener('keydown', e => keys.add(e.code));
+addEventListener('keydown', e => {
+  keys.add(e.code);
+  if (e.code === 'KeyE') inspectAhead();
+});
 addEventListener('keyup', e => keys.delete(e.code));
 
 startBtn.addEventListener('click', async () => {
@@ -311,6 +322,106 @@ goPoiBtn?.addEventListener('click', async () => {
   await planRouteToTarget(target, false);
 });
 
+
+function formatKnownValue(value) {
+  if (value === undefined || value === null || value === '') return '—';
+  return String(value);
+}
+
+function inspectRows(meta) {
+  const tags = meta?.tags || {};
+  const rows = [];
+  const push = (label, value) => {
+    if (value !== undefined && value !== null && value !== '') rows.push([label, formatKnownValue(value)]);
+  };
+
+  push('OSM', meta?.osm);
+  push('النوع', meta?.type);
+  push('الاسم', tags['name:ar'] || tags.name);
+  push('المرجع', tags.ref);
+
+  if (meta?.type === 'road') {
+    push('تصنيف الطريق', tags.highway);
+    push('السطح', tags.surface);
+    push('العرض الموثق', tags.width ? tags.width + ' م' : '');
+    push('المسارات', tags.lanes);
+    push('المشي', tags.foot);
+    push('الوصول', tags.access);
+  } else if (meta?.type === 'building') {
+    push('استخدام المبنى', tags.building);
+    push('الارتفاع', tags.height ? tags.height + ' م' : '');
+    push('الأدوار', tags['building:levels']);
+    push('لون المبنى', tags['building:colour']);
+    push('شكل السقف', tags['roof:shape']);
+    push('حالة الارتفاع', meta.heightKnown ? 'موثق في البيانات' : 'غير موثق — عرض حيادي');
+  } else if (meta?.type === 'barrier') {
+    push('نوع الحاجز', tags.barrier);
+    push('الارتفاع', tags.height ? tags.height + ' م' : '');
+  }
+
+  return rows;
+}
+
+function showInspection(meta, distance) {
+  if (!inspectPanel || !inspectBodyEl || !inspectTitleEl) return;
+  const rows = inspectRows(meta);
+  inspectTitleEl.textContent =
+    meta?.type === 'building' ? 'مبنى من بيانات الخريطة' :
+    meta?.type === 'road' ? 'طريق من بيانات الخريطة' :
+    meta?.type === 'barrier' ? 'حاجز من بيانات الخريطة' :
+    'عنصر من بيانات الخريطة';
+
+  if (Number.isFinite(distance)) rows.push(['المسافة عنك', Math.round(distance) + ' م']);
+  rows.push(['المصدر', 'OpenStreetMap']);
+
+  inspectBodyEl.innerHTML = rows.map(([k,v]) =>
+    '<div class="row"><span class="key">' + escapeHtml(k) + '</span><span>' + escapeHtml(v) + '</span></div>'
+  ).join('');
+  inspectPanel.hidden = false;
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function inspectAhead() {
+  if (!inspectables.length) {
+    if (nearbyFeatureEl) nearbyFeatureEl.textContent = 'لا توجد عناصر قابلة للفحص محمّلة بعد';
+    return;
+  }
+  raycaster.setFromCamera({ x: 0, y: 0 }, camera);
+  raycaster.far = 90;
+  const hits = raycaster.intersectObjects(inspectables, false);
+  const hit = hits.find(h => h.object?.userData?.inspect);
+  if (!hit) {
+    if (nearbyFeatureEl) nearbyFeatureEl.textContent = 'وجّه المؤشر إلى طريق أو مبنى موثق ثم افحصه';
+    return;
+  }
+  showInspection(hit.object.userData.inspect, hit.distance);
+}
+
+inspectBtn?.addEventListener('click', inspectAhead);
+inspectCloseBtn?.addEventListener('click', () => {
+  if (inspectPanel) inspectPanel.hidden = true;
+});
+
+copyCoordsBtn?.addEventListener('click', async () => {
+  const p = toLatLon(camera.position.x, camera.position.z);
+  const textValue = p.lat.toFixed(6) + ', ' + p.lon.toFixed(6);
+  try {
+    await navigator.clipboard.writeText(textValue);
+    copyCoordsBtn.textContent = 'تم نسخ الإحداثيات';
+    setTimeout(() => { copyCoordsBtn.textContent = 'نسخ إحداثيات موقعي'; }, 1500);
+  } catch {
+    copyCoordsBtn.textContent = textValue;
+  }
+});
+
 renderer.domElement.addEventListener('click', () => {
   if (!isCoarse && start.style.display === 'none' && !controls.isLocked) controls.lock();
 });
@@ -400,7 +511,14 @@ function roadColor(tags) {
   return 0x77746e;
 }
 
-function addSegmentBox(a, b, width, height, color, y = 0.02, cast = false) {
+function attachInspectMeta(mesh, meta) {
+  if (!mesh || !meta) return mesh;
+  mesh.userData.inspect = meta;
+  inspectables.push(mesh);
+  return mesh;
+}
+
+function addSegmentBox(a, b, width, height, color, y = 0.02, cast = false, meta = null) {
   const dx = b[0] - a[0], dz = b[1] - a[1];
   const len = Math.hypot(dx, dz);
   if (len < 0.3) return null;
@@ -413,6 +531,7 @@ function addSegmentBox(a, b, width, height, color, y = 0.02, cast = false) {
   mesh.receiveShadow = true;
   mesh.castShadow = cast;
   scene.add(mesh);
+  attachInspectMeta(mesh, meta);
   return mesh;
 }
 
@@ -439,7 +558,11 @@ function addRoad(points, tags, id) {
     const len = Math.hypot(dx, dz);
     if (len < 0.5) continue;
 
-    addSegmentBox(a, b, width, 0.035, color, 0.005, false);
+    addSegmentBox(a, b, width, 0.035, color, 0.005, false, {
+      osm: 'way/' + id,
+      type: 'road',
+      tags: effectiveTags
+    });
     roadSegments.push({
       a, b, width, highway: effectiveTags.highway,
       name: effectiveTags.name || effectiveTags['name:ar'] || '',
@@ -557,6 +680,12 @@ function addBuilding(points, tags, id) {
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   scene.add(mesh);
+  attachInspectMeta(mesh, {
+    osm: 'way/' + id,
+    type: 'building',
+    tags: effectiveTags,
+    heightKnown: heightInfo.exact
+  });
   registerSolidPolygon(points);
 
   // ExtrudeGeometry already closes the top. Do not add a guessed roof shape.
@@ -643,7 +772,11 @@ function addBarrier(points, tags, nodeIds, nodes) {
     const trimmed = trimSegmentForGate(points[i], points[i + 1], startGate, endGate);
     if (!trimmed) continue;
 
-    addSegmentBox(trimmed.a, trimmed.b, width, h, color, 0, true);
+    addSegmentBox(trimmed.a, trimmed.b, width, h, color, 0, true, {
+      osm: tags.__osm || '',
+      type: 'barrier',
+      tags
+    });
     const segment = {
       a: trimmed.a,
       b: trimmed.b,
@@ -962,7 +1095,7 @@ function buildFromOSM(data) {
       addBuilding(pts, e.tags, e.id);
       buildings++;
     } else if (e.tags.barrier) {
-      addBarrier(pts, e.tags, e.nodes, nodes);
+      addBarrier(pts, { ...e.tags, __osm: 'way/' + e.id }, e.nodes, nodes);
       details++;
     } else if (e.tags.waterway) {
       addWaterway(pts, e.tags);
