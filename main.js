@@ -41,6 +41,8 @@ const refreshMapBtn = document.getElementById('refreshMapBtn');
 const poiSearch = document.getElementById('poiSearch');
 const poiOptions = document.getElementById('poiOptions');
 const goPoiBtn = document.getElementById('goPoiBtn');
+const clearRouteBtn = document.getElementById('clearRouteBtn');
+const routeStatusEl = document.getElementById('routeStatus');
 const start = document.getElementById('start');
 const startBtn = document.getElementById('startBtn');
 
@@ -101,6 +103,8 @@ let walkedMeters = 0;
 let estimatedDimensionCount = 0;
 const totalStats = { roads: 0, buildings: 0, details: 0 };
 let currentDataSource = 'loading';
+let activeRoute = [];
+let activeRouteTarget = null;
 
 const MAP_DB_NAME = 'hgame-map-cache-v1';
 const MAP_DB_STORE = 'osm';
@@ -143,6 +147,109 @@ refreshMapBtn?.addEventListener('click', async () => {
   location.reload();
 });
 
+function roadNodeKey(p) {
+  return p[0].toFixed(3) + ',' + p[1].toFixed(3);
+}
+
+function addGraphEdge(graph, from, to, weight) {
+  if (!graph.has(from)) graph.set(from, []);
+  graph.get(from).push({ to, weight });
+}
+
+function buildWalkingGraph() {
+  const graph = new Map();
+  const coords = new Map();
+
+  for (const s of roadSegments) {
+    if (!s.walkable) continue;
+    const ka = roadNodeKey(s.a);
+    const kb = roadNodeKey(s.b);
+    const len = Math.hypot(s.b[0] - s.a[0], s.b[1] - s.a[1]);
+    if (len < 0.2) continue;
+    coords.set(ka, s.a);
+    coords.set(kb, s.b);
+    addGraphEdge(graph, ka, kb, len);
+    addGraphEdge(graph, kb, ka, len);
+  }
+
+  return { graph, coords };
+}
+
+function nearestWalkableRoadPoint(x, z, maxDistance = Infinity) {
+  let best = null;
+  for (const s of roadSegments) {
+    if (!s.walkable) continue;
+    const p = closestPointOnSegment(x, z, s.a, s.b);
+    if (!best || p.d2 < best.d2) best = { ...p, s };
+  }
+  if (!best || best.d2 > maxDistance * maxDistance) return null;
+  return best;
+}
+
+function connectTemporaryNode(graph, coords, key, hit) {
+  const aKey = roadNodeKey(hit.s.a);
+  const bKey = roadNodeKey(hit.s.b);
+  const len = Math.hypot(hit.s.b[0] - hit.s.a[0], hit.s.b[1] - hit.s.a[1]);
+  const point = [hit.x, hit.z];
+  coords.set(key, point);
+
+  const dA = hit.t * len;
+  const dB = (1 - hit.t) * len;
+  addGraphEdge(graph, key, aKey, dA);
+  addGraphEdge(graph, aKey, key, dA);
+  addGraphEdge(graph, key, bKey, dB);
+  addGraphEdge(graph, bKey, key, dB);
+}
+
+function shortestPath(graph, coords, startKey, targetKey) {
+  const dist = new Map([[startKey, 0]]);
+  const prev = new Map();
+  const visited = new Set();
+  const queue = [{ key: startKey, d: 0 }];
+
+  while (queue.length) {
+    queue.sort((a, b) => a.d - b.d);
+    const current = queue.shift();
+    if (!current || visited.has(current.key)) continue;
+    visited.add(current.key);
+    if (current.key === targetKey) break;
+
+    for (const edge of graph.get(current.key) || []) {
+      if (visited.has(edge.to)) continue;
+      const nd = current.d + edge.weight;
+      if (nd < (dist.get(edge.to) ?? Infinity)) {
+        dist.set(edge.to, nd);
+        prev.set(edge.to, current.key);
+        queue.push({ key: edge.to, d: nd });
+      }
+    }
+  }
+
+  if (!dist.has(targetKey)) return null;
+  const keys = [];
+  let cursor = targetKey;
+  while (cursor) {
+    keys.push(cursor);
+    if (cursor === startKey) break;
+    cursor = prev.get(cursor);
+  }
+  if (keys[keys.length - 1] !== startKey) return null;
+  keys.reverse();
+
+  return {
+    points: keys.map(k => coords.get(k)).filter(Boolean),
+    distance: dist.get(targetKey)
+  };
+}
+
+function clearRoute() {
+  activeRoute = [];
+  activeRouteTarget = null;
+  if (routeStatusEl) routeStatusEl.textContent = 'المسار: غير محدد';
+}
+
+clearRouteBtn?.addEventListener('click', clearRoute);
+
 goPoiBtn?.addEventListener('click', async () => {
   const query = (poiSearch?.value || '').trim();
   if (!query) return;
@@ -155,21 +262,36 @@ goPoiBtn?.addEventListener('click', async () => {
     return;
   }
 
-  let hit = nearestRoadPoint(target.x, target.z, 700);
-  if (!hit) {
-    camera.position.set(target.x, EYE_HEIGHT, target.z);
-    await streamAroundPlayer(true);
-    hit = nearestRoadPoint(target.x, target.z, 700);
+  let startHit = nearestWalkableRoadPoint(camera.position.x, camera.position.z, 250);
+  let targetHit = nearestWalkableRoadPoint(target.x, target.z, 700);
+
+  if (!targetHit) {
+    if (nearbyFeatureEl) nearbyFeatureEl.textContent = 'المعلم موثق لكن لا يوجد طريق مشي محمّل قريب منه';
+    return;
+  }
+  if (!startHit) {
+    if (nearbyFeatureEl) nearbyFeatureEl.textContent = 'أنت بعيد عن شبكة الطرق المحمّلة؛ اقترب من طريق موثق أولاً';
+    return;
   }
 
-  if (hit) {
-    camera.position.set(hit.x, EYE_HEIGHT, hit.z);
-    faceAlongRoad(hit);
-    if (nearbyFeatureEl) nearbyFeatureEl.textContent = 'تم الانتقال قرب: ' + target.label;
-    streamAroundPlayer(true);
-  } else if (nearbyFeatureEl) {
-    nearbyFeatureEl.textContent = 'المعلم موثق لكن لا يوجد طريق محمّل قريب منه';
+  const { graph, coords } = buildWalkingGraph();
+  connectTemporaryNode(graph, coords, '__route_start__', startHit);
+  connectTemporaryNode(graph, coords, '__route_target__', targetHit);
+
+  const result = shortestPath(graph, coords, '__route_start__', '__route_target__');
+  if (!result || !result.points.length) {
+    if (nearbyFeatureEl) nearbyFeatureEl.textContent = 'لم أجد مسار مشي متصل ضمن الطرق المحمّلة';
+    return;
   }
+
+  activeRoute = result.points;
+  activeRouteTarget = target;
+  const label = result.distance < 1000
+    ? Math.round(result.distance) + ' م'
+    : (result.distance / 1000).toFixed(2) + ' كم';
+
+  if (routeStatusEl) routeStatusEl.textContent = 'المسار: ' + label + ' إلى ' + target.label;
+  if (nearbyFeatureEl) nearbyFeatureEl.textContent = 'تم تحديد مسار عبر الطرق الموثقة إلى: ' + target.label;
 });
 
 renderer.domElement.addEventListener('click', () => {
@@ -277,6 +399,15 @@ function addSegmentBox(a, b, width, height, color, y = 0.02, cast = false) {
   return mesh;
 }
 
+function isWalkableRoad(tags) {
+  const h = tags.highway || '';
+  if (!h) return false;
+  if (h === 'motorway' || h === 'motorway_link') return false;
+  if (tags.foot === 'no') return false;
+  if (tags.access === 'no' || tags.access === 'private') return false;
+  return true;
+}
+
 function addRoad(points, tags, id) {
   if (points.length < 2) return;
   const override = verifiedAttributes('way', id);
@@ -295,7 +426,8 @@ function addRoad(points, tags, id) {
     roadSegments.push({
       a, b, width, highway: effectiveTags.highway,
       name: effectiveTags.name || effectiveTags['name:ar'] || '',
-      ref: effectiveTags.ref || ''
+      ref: effectiveTags.ref || '',
+      walkable: isWalkableRoad(effectiveTags)
     });
 
     // Do not invent painted lane markings. Render only when the map explicitly says they exist.
@@ -987,6 +1119,41 @@ function updateCoords() {
   }
 }
 
+function updateRouteProgress() {
+  if (!activeRouteTarget || activeRoute.length < 2 || !routeStatusEl) return;
+
+  let nearestIndex = 0;
+  let bestD2 = Infinity;
+  for (let i = 0; i < activeRoute.length; i++) {
+    const p = activeRoute[i];
+    const d2 = (camera.position.x - p[0]) ** 2 + (camera.position.z - p[1]) ** 2;
+    if (d2 < bestD2) {
+      bestD2 = d2;
+      nearestIndex = i;
+    }
+  }
+
+  let remaining = Math.sqrt(bestD2);
+  for (let i = nearestIndex; i < activeRoute.length - 1; i++) {
+    remaining += Math.hypot(
+      activeRoute[i + 1][0] - activeRoute[i][0],
+      activeRoute[i + 1][1] - activeRoute[i][1]
+    );
+  }
+
+  if (remaining < 15) {
+    routeStatusEl.textContent = 'وصلت قرب: ' + activeRouteTarget.label;
+    activeRoute = [];
+    activeRouteTarget = null;
+    return;
+  }
+
+  const label = remaining < 1000
+    ? Math.round(remaining) + ' م'
+    : (remaining / 1000).toFixed(2) + ' كم';
+  routeStatusEl.textContent = 'متبقي: ' + label + ' إلى ' + activeRouteTarget.label;
+}
+
 function updateNearbyFeature() {
   if (!nearbyFeatureEl || !namedFeatures.length) {
     if (nearbyFeatureEl) nearbyFeatureEl.textContent = 'أقرب معلم موثق: لا يوجد اسم قريب في البيانات';
@@ -1096,6 +1263,19 @@ function drawMiniMap() {
     ctx.moveTo(tx(r.a[0]), tz(r.a[1]));
     ctx.lineTo(tx(r.b[0]), tz(r.b[1]));
     ctx.stroke();
+  }
+
+  if (activeRoute.length > 1) {
+    ctx.strokeStyle = 'rgba(255,255,255,.95)';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(tx(activeRoute[0][0]), tz(activeRoute[0][1]));
+    for (let i = 1; i < activeRoute.length; i++) {
+      ctx.lineTo(tx(activeRoute[i][0]), tz(activeRoute[i][1]));
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
 
   ctx.restore();
@@ -1255,6 +1435,7 @@ function animate() {
   if (lastNearbyCheck > 0.5) {
     lastNearbyCheck = 0;
     updateNearbyFeature();
+    updateRouteProgress();
   }
 
   lastMiniMapDraw += dt;
