@@ -1,0 +1,15 @@
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#cdb98d;font-family:system-ui,-apple-system,Segoe UI,Tahoma,Arial,sans-serif}
+#game{position:fixed;inset:0}
+canvas{display:block;width:100%;height:100%;touch-action:none}
+#hud{position:fixed;top:12px;left:12px;right:12px;display:flex;justify-content:space-between;gap:12px;pointer-events:none;z-index:4}
+.panel{background:rgba(20,20,18,.72);backdrop-filter:blur(8px);color:#fff;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:4px;font-size:12px}
+.panel strong{font-size:15px}.help{align-items:flex-start}
+#crosshair{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);color:#fff;font-size:26px;text-shadow:0 1px 4px #000;pointer-events:none;z-index:3}
+#start{position:fixed;inset:0;display:grid;place-items:center;background:linear-gradient(rgba(27,25,20,.18),rgba(27,25,20,.5));z-index:9}
+.card{width:min(420px,calc(100vw - 40px));background:rgba(255,255,255,.92);border-radius:22px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+.card h1{margin:0 0 8px;font-size:26px}.card p{line-height:1.7;color:#3f3a31}.card small{display:block;margin-top:10px;color:#6f6658}
+button{border:0;border-radius:14px;background:#20251f;color:#fff;padding:14px 22px;font-weight:700;font-size:16px;width:100%}
+#mobileControls{position:fixed;inset:0;pointer-events:none;z-index:5;display:none}
+#joystick{position:absolute;left:22px;bottom:26px;width:116px;height:116px;border-radius:50%;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.28);pointer-events:auto;touch-action:none}
+#stick{position:absolute;left:33px;top:33px;width:50px;height:50px;border-radius:50%;background:rgba(255,255,255,.58);box-shadow:0 4px 16px rgba(0,0,0,.25)}
+@media(max-width:900px),(pointer:coarse){#mobileControls{display:block}.help{display:none}#hud{right:auto;max-width:70vw}#crosshair{opacity:.65}}
