@@ -55,6 +55,8 @@ const inspectBodyEl = document.getElementById('inspectBody');
 const inspectCloseBtn = document.getElementById('inspectCloseBtn');
 const inspectOsmLink = document.getElementById('inspectOsmLink');
 const copyCoordsBtn = document.getElementById('copyCoordsBtn');
+const copyReferenceBtn = document.getElementById('copyReferenceBtn');
+let lastInspectedMeta = null;
 const navGuideEl = document.getElementById('navGuide');
 const navArrowEl = document.getElementById('navArrow');
 const navInstructionEl = document.getElementById('navInstruction');
@@ -376,6 +378,7 @@ function inspectRows(meta) {
 
 function showInspection(meta, distance) {
   if (!inspectPanel || !inspectBodyEl || !inspectTitleEl) return;
+  lastInspectedMeta = meta;
   const rows = inspectRows(meta);
   inspectTitleEl.textContent =
     meta?.type === 'building' ? 'مبنى من بيانات الخريطة' :
@@ -429,6 +432,44 @@ function inspectAhead() {
 inspectBtn?.addEventListener('click', inspectAhead);
 inspectCloseBtn?.addEventListener('click', () => {
   if (inspectPanel) inspectPanel.hidden = true;
+});
+
+copyReferenceBtn?.addEventListener('click', async () => {
+  if (!lastInspectedMeta?.osm) {
+    copyReferenceBtn.textContent = 'افحص عنصرًا أولًا';
+    setTimeout(() => { copyReferenceBtn.textContent = 'نسخ قالب مرجع أرضي لهذا العنصر'; }, 1500);
+    return;
+  }
+
+  const p = toLatLon(camera.position.x, camera.position.z);
+  const a = isCoarse ? yaw : camera.rotation.y;
+  const headingDeg = ((-a * 180 / Math.PI) % 360 + 360) % 360;
+
+  const template = {
+    id: 'reference-' + Date.now(),
+    osm: lastInspectedMeta.osm,
+    source_url: '',
+    captured_at: new Date().toISOString(),
+    observer: '',
+    position: {
+      lat: Number(p.lat.toFixed(7)),
+      lon: Number(p.lon.toFixed(7)),
+      heading_deg: Math.round(headingDeg),
+      accuracy_m: null
+    },
+    verification: 'exact-object',
+    claims: {},
+    notes: 'أضف رابط الصورة/الفيديو والحقائق المرئية فقط. لا تضف استنتاجات.'
+  };
+
+  const value = JSON.stringify(template, null, 2);
+  try {
+    await navigator.clipboard.writeText(value);
+    copyReferenceBtn.textContent = 'تم نسخ قالب المرجع';
+  } catch {
+    copyReferenceBtn.textContent = 'تعذر النسخ';
+  }
+  setTimeout(() => { copyReferenceBtn.textContent = 'نسخ قالب مرجع أرضي لهذا العنصر'; }, 1800);
 });
 
 copyCoordsBtn?.addEventListener('click', async () => {
