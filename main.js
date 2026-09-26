@@ -14,11 +14,13 @@ const buildingPolys = [];
 const solidSegments = [];
 const roadSegments = [];
 let didInitialSnap = false;
+let unknownBuildingHeightCount = 0;
 let loadingCount = 0;
 
 const root = document.getElementById('game');
 const statusEl = document.getElementById('status');
 const coordsEl = document.getElementById('coords');
+const roadNameEl = document.getElementById('roadName');
 const start = document.getElementById('start');
 const startBtn = document.getElementById('startBtn');
 
@@ -178,40 +180,47 @@ function addRoad(points, tags) {
     if (len < 0.5) continue;
 
     addSegmentBox(a, b, width, 0.035, color, 0.005, false);
-    roadSegments.push({ a, b, width, highway: tags.highway });
+    roadSegments.push({
+      a, b, width, highway: tags.highway,
+      name: tags.name || tags['name:ar'] || '',
+      ref: tags.ref || ''
+    });
 
-    const lanes = parseInt(tags.lanes || '0', 10);
-    const major = ['motorway', 'trunk', 'primary', 'secondary'].includes(tags.highway);
-    if (paved && (major || lanes >= 2) && tags.lanes !== '1') {
+    // Do not invent painted lane markings. Render only when the map explicitly says they exist.
+    const explicitMarkings =
+      tags.lane_markings === 'yes' ||
+      tags['centre_line'] === 'yes' ||
+      tags['center_line'] === 'yes';
+    if (paved && explicitMarkings) {
       const line = addSegmentBox(a, b, 0.11, 0.012, 0xe8dfbd, 0.038, false);
       if (line) line.material.roughness = 0.82;
     }
 
-    if (tags.sidewalk && tags.sidewalk !== 'no') {
-      const side = width / 2 + 0.8;
-      const ux = dx / len, uz = dz / len;
-      const px = -uz * side, pz = ux * side;
-      addSegmentBox([a[0] + px, a[1] + pz], [b[0] + px, b[1] + pz], 1.25, 0.06, 0xc1b6a0, 0.02);
-      if (tags.sidewalk === 'both') {
+    // Sidewalks are drawn only when explicitly mapped, on the mapped side.
+    const sidewalk = tags.sidewalk;
+    if (sidewalk && sidewalk !== 'no' && sidewalk !== 'separate') {
+      const offset = width / 2 + 0.8;
+      const px = (-dz / len) * offset, pz = (dx / len) * offset;
+      if (sidewalk === 'left' || sidewalk === 'both' || sidewalk === 'yes') {
+        addSegmentBox([a[0] + px, a[1] + pz], [b[0] + px, b[1] + pz], 1.25, 0.06, 0xc1b6a0, 0.02);
+      }
+      if (sidewalk === 'right' || sidewalk === 'both') {
         addSegmentBox([a[0] - px, a[1] - pz], [b[0] - px, b[1] - pz], 1.25, 0.06, 0xc1b6a0, 0.02);
       }
     }
   }
 }
 
-function seededColor(id) {
-  const palette = [0xd8c5a6, 0xe5d5b8, 0xc7b08d, 0xeee1ca, 0xbfa887, 0xd4c19f, 0xe9dcc5];
-  return palette[Math.abs(Number(id) || 0) % palette.length];
-}
-
-function heightFromTags(tags, id) {
+function heightFromTags(tags) {
   const h = parseFloat(tags.height);
-  if (Number.isFinite(h)) return Math.min(Math.max(h, 2.6), 32);
+  if (Number.isFinite(h)) return { value: Math.min(Math.max(h, 2.6), 32), exact: true };
   const levels = parseFloat(tags['building:levels']);
-  if (Number.isFinite(levels)) return Math.min(Math.max(levels * 3.05, 3), 28);
-  const type = tags.building || '';
-  if (['shed', 'garage', 'garages'].includes(type)) return 2.7;
-  return 3.3 + (Math.abs(Number(id) || 0) % 3) * 0.55;
+  if (Number.isFinite(levels)) return { value: Math.min(Math.max(levels * 3.05, 3), 28), exact: true };
+
+  // Unknown height: use one neutral low block only so the mapped footprint is visible.
+  // This is deliberately not varied per building, avoiding invented skyline differences.
+  unknownBuildingHeightCount++;
+  return { value: 3.2, exact: false };
 }
 
 function registerSolidPolygon(points) {
@@ -225,7 +234,8 @@ function registerSolidPolygon(points) {
 
 function addBuilding(points, tags, id) {
   if (points.length < 4 || !isClosed(points)) return;
-  const height = heightFromTags(tags, id);
+  const heightInfo = heightFromTags(tags);
+  const height = heightInfo.value;
   const geo = new THREE.ExtrudeGeometry(makeShape(points), {
     depth: height,
     bevelEnabled: false,
@@ -233,7 +243,7 @@ function addBuilding(points, tags, id) {
   });
   geo.rotateX(-Math.PI / 2);
 
-  const baseColor = parseColor(tags['building:colour'], seededColor(id));
+  const baseColor = parseColor(tags['building:colour'], 0xd8cbb2);
   const mesh = new THREE.Mesh(
     geo,
     new THREE.MeshStandardMaterial({ color: baseColor, roughness: 0.91 })
@@ -244,23 +254,12 @@ function addBuilding(points, tags, id) {
   scene.add(mesh);
   registerSolidPolygon(points);
 
-  const roofShape = tags['roof:shape'] || 'flat';
-  if (roofShape === 'flat' || !tags['roof:shape']) {
-    const roof = new THREE.Mesh(
-      new THREE.ShapeGeometry(makeShape(points)),
-      new THREE.MeshStandardMaterial({
-        color: parseColor(tags['roof:colour'], 0xc8bda8),
-        roughness: 0.96
-      })
-    );
-    roof.geometry.rotateX(-Math.PI / 2);
-    roof.position.y = height + 0.05;
-    roof.receiveShadow = true;
-    scene.add(roof);
-  }
+  // ExtrudeGeometry already closes the top. Do not add a guessed roof shape.
+  // Roof-specific geometry will only be added later when reliable roof tags or ground references exist.
 }
 
 function landColor(tags) {
+  if (tags.natural === 'water') return 0x6f929c;
   if (tags.natural === 'sand') return 0xd7c399;
   if (tags.natural === 'scrub') return 0xa9a176;
   if (tags.natural === 'wood') return 0x8c936b;
@@ -316,10 +315,14 @@ function addBarrier(points, tags) {
 }
 
 function addWaterway(points, tags) {
-  if (points.length < 2) return;
-  const width = Math.min(Math.max(parseFloat(tags.width) || 2.4, 1.2), 12);
+  // A mapped waterway line does not prove visible standing water.
+  // Only render it when width is explicitly mapped; otherwise preserve it as data but not scenery.
+  const mappedWidth = parseFloat(tags.width);
+  if (points.length < 2 || !Number.isFinite(mappedWidth) || mappedWidth <= 0) return;
+  const color = tags.intermittent === 'yes' ? 0xb5a785 : 0x738e93;
+  const width = Math.min(Math.max(mappedWidth, 0.8), 12);
   for (let i = 0; i < points.length - 1; i++) {
-    addSegmentBox(points[i], points[i + 1], width, 0.018, 0x688e9a, -0.01, false);
+    addSegmentBox(points[i], points[i + 1], width, 0.012, color, -0.015, false);
   }
 }
 
@@ -465,7 +468,8 @@ function buildFromOSM(data) {
   }
 
   statusEl.textContent =
-    'الخريطة الحقيقية: ' + roads + ' طريق، ' + buildings + ' مبنى، ' + details + ' عنصر محلي';
+    'المحمّل من الخريطة: ' + roads + ' طريق، ' + buildings + ' مبنى، ' + details + ' عنصر موثق' +
+    (unknownBuildingHeightCount ? ' • ارتفاع غير موثق: ' + unknownBuildingHeightCount : '');
 
   if (!didInitialSnap && roadSegments.length) {
     snapStartToNearestRoad();
@@ -545,6 +549,20 @@ function collides(x, z) {
 function updateCoords() {
   const p = toLatLon(camera.position.x, camera.position.z);
   coordsEl.textContent = p.lat.toFixed(6) + ', ' + p.lon.toFixed(6);
+
+  if (!roadNameEl || !roadSegments.length) return;
+  let best = null;
+  for (const s of roadSegments) {
+    if (!s.name && !s.ref) continue;
+    const cp = closestPointOnSegment(camera.position.x, camera.position.z, s.a, s.b);
+    if (!best || cp.d2 < best.d2) best = { d2: cp.d2, s };
+  }
+  if (best && best.d2 < 45 * 45) {
+    const label = best.s.name || best.s.ref;
+    roadNameEl.textContent = 'الطريق: ' + label;
+  } else {
+    roadNameEl.textContent = 'الطريق: غير مسمّى في البيانات';
+  }
 }
 
 function attemptMove(dx, dz) {
