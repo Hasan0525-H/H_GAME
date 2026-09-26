@@ -43,6 +43,9 @@ const poiOptions = document.getElementById('poiOptions');
 const goPoiBtn = document.getElementById('goPoiBtn');
 const clearRouteBtn = document.getElementById('clearRouteBtn');
 const routeStatusEl = document.getElementById('routeStatus');
+const navGuideEl = document.getElementById('navGuide');
+const navArrowEl = document.getElementById('navArrow');
+const navInstructionEl = document.getElementById('navInstruction');
 const start = document.getElementById('start');
 const startBtn = document.getElementById('startBtn');
 
@@ -105,6 +108,7 @@ const totalStats = { roads: 0, buildings: 0, details: 0 };
 let currentDataSource = 'loading';
 let activeRoute = [];
 let activeRouteTarget = null;
+let lastRerouteAt = 0;
 
 const MAP_DB_NAME = 'hgame-map-cache-v1';
 const MAP_DB_STORE = 'osm';
@@ -246,9 +250,51 @@ function clearRoute() {
   activeRoute = [];
   activeRouteTarget = null;
   if (routeStatusEl) routeStatusEl.textContent = 'المسار: غير محدد';
+  if (navGuideEl) navGuideEl.style.display = 'none';
+  if (navInstructionEl) navInstructionEl.textContent = 'لا يوجد مسار نشط';
+  if (navArrowEl) navArrowEl.style.transform = 'rotate(0deg)';
 }
 
 clearRouteBtn?.addEventListener('click', clearRoute);
+
+async function planRouteToTarget(target, silent = false) {
+  if (!target) return false;
+
+  const startHit = nearestWalkableRoadPoint(camera.position.x, camera.position.z, 250);
+  const targetHit = nearestWalkableRoadPoint(target.x, target.z, 700);
+
+  if (!targetHit) {
+    if (!silent && nearbyFeatureEl) nearbyFeatureEl.textContent = 'المعلم موثق لكن لا يوجد طريق مشي محمّل قريب منه';
+    return false;
+  }
+  if (!startHit) {
+    if (!silent && nearbyFeatureEl) nearbyFeatureEl.textContent = 'أنت بعيد عن شبكة الطرق المحمّلة؛ اقترب من طريق موثق أولاً';
+    return false;
+  }
+
+  const { graph, coords } = buildWalkingGraph();
+  connectTemporaryNode(graph, coords, '__route_start__', startHit);
+  connectTemporaryNode(graph, coords, '__route_target__', targetHit);
+
+  const result = shortestPath(graph, coords, '__route_start__', '__route_target__');
+  if (!result || result.points.length < 2) {
+    if (!silent && nearbyFeatureEl) nearbyFeatureEl.textContent = 'لم أجد مسار مشي متصل ضمن الطرق المحمّلة';
+    return false;
+  }
+
+  activeRoute = result.points;
+  activeRouteTarget = target;
+  lastRerouteAt = performance.now();
+
+  const label = result.distance < 1000
+    ? Math.round(result.distance) + ' م'
+    : (result.distance / 1000).toFixed(2) + ' كم';
+
+  if (routeStatusEl) routeStatusEl.textContent = 'المسار: ' + label + ' إلى ' + target.label;
+  if (!silent && nearbyFeatureEl) nearbyFeatureEl.textContent = 'تم تحديد مسار عبر الطرق الموثقة إلى: ' + target.label;
+  if (navGuideEl) navGuideEl.style.display = 'flex';
+  return true;
+}
 
 goPoiBtn?.addEventListener('click', async () => {
   const query = (poiSearch?.value || '').trim();
@@ -262,36 +308,7 @@ goPoiBtn?.addEventListener('click', async () => {
     return;
   }
 
-  let startHit = nearestWalkableRoadPoint(camera.position.x, camera.position.z, 250);
-  let targetHit = nearestWalkableRoadPoint(target.x, target.z, 700);
-
-  if (!targetHit) {
-    if (nearbyFeatureEl) nearbyFeatureEl.textContent = 'المعلم موثق لكن لا يوجد طريق مشي محمّل قريب منه';
-    return;
-  }
-  if (!startHit) {
-    if (nearbyFeatureEl) nearbyFeatureEl.textContent = 'أنت بعيد عن شبكة الطرق المحمّلة؛ اقترب من طريق موثق أولاً';
-    return;
-  }
-
-  const { graph, coords } = buildWalkingGraph();
-  connectTemporaryNode(graph, coords, '__route_start__', startHit);
-  connectTemporaryNode(graph, coords, '__route_target__', targetHit);
-
-  const result = shortestPath(graph, coords, '__route_start__', '__route_target__');
-  if (!result || !result.points.length) {
-    if (nearbyFeatureEl) nearbyFeatureEl.textContent = 'لم أجد مسار مشي متصل ضمن الطرق المحمّلة';
-    return;
-  }
-
-  activeRoute = result.points;
-  activeRouteTarget = target;
-  const label = result.distance < 1000
-    ? Math.round(result.distance) + ' م'
-    : (result.distance / 1000).toFixed(2) + ' كم';
-
-  if (routeStatusEl) routeStatusEl.textContent = 'المسار: ' + label + ' إلى ' + target.label;
-  if (nearbyFeatureEl) nearbyFeatureEl.textContent = 'تم تحديد مسار عبر الطرق الموثقة إلى: ' + target.label;
+  await planRouteToTarget(target, false);
 });
 
 renderer.domElement.addEventListener('click', () => {
@@ -1119,39 +1136,90 @@ function updateCoords() {
   }
 }
 
-function updateRouteProgress() {
+function routePosition() {
+  if (activeRoute.length < 2) return null;
+
+  let best = null;
+  let prefix = 0;
+
+  for (let i = 0; i < activeRoute.length - 1; i++) {
+    const a = activeRoute[i], b = activeRoute[i + 1];
+    const cp = closestPointOnSegment(camera.position.x, camera.position.z, a, b);
+    const segLen = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (!best || cp.d2 < best.d2) {
+      best = { ...cp, index: i, prefix, segLen };
+    }
+    prefix += segLen;
+  }
+
+  if (!best) return null;
+
+  const total = prefix;
+  const traveledOnRoute = best.prefix + best.t * best.segLen;
+  const remaining = Math.max(0, total - traveledOnRoute);
+  const nextPoint = activeRoute[Math.min(best.index + 1, activeRoute.length - 1)];
+  return {
+    deviation: Math.sqrt(best.d2),
+    remaining,
+    nextPoint,
+    segmentIndex: best.index
+  };
+}
+
+function updateNavigationGuide(pos) {
+  if (!pos || !activeRouteTarget || !navGuideEl || !navArrowEl || !navInstructionEl) return;
+
+  navGuideEl.style.display = 'flex';
+  const dx = pos.nextPoint[0] - camera.position.x;
+  const dz = pos.nextPoint[1] - camera.position.z;
+  const targetAngle = Math.atan2(-dx, -dz);
+  const viewYaw = isCoarse ? yaw : camera.rotation.y;
+  let delta = targetAngle - viewYaw;
+  while (delta > Math.PI) delta -= Math.PI * 2;
+  while (delta < -Math.PI) delta += Math.PI * 2;
+
+  navArrowEl.style.transform = 'rotate(' + (delta * 180 / Math.PI) + 'deg)';
+
+  const absDeg = Math.abs(delta * 180 / Math.PI);
+  let instruction = 'استمر للأمام';
+  if (absDeg > 135) instruction = 'استدر للخلف';
+  else if (absDeg > 45) instruction = delta > 0 ? 'اتجه يسارًا' : 'اتجه يمينًا';
+  else if (absDeg > 18) instruction = delta > 0 ? 'ميل يسارًا' : 'ميل يمينًا';
+
+  navInstructionEl.textContent = instruction + ' • ' + Math.max(1, Math.round(pos.remaining)) + ' م';
+}
+
+async function updateRouteProgress() {
   if (!activeRouteTarget || activeRoute.length < 2 || !routeStatusEl) return;
 
-  let nearestIndex = 0;
-  let bestD2 = Infinity;
-  for (let i = 0; i < activeRoute.length; i++) {
-    const p = activeRoute[i];
-    const d2 = (camera.position.x - p[0]) ** 2 + (camera.position.z - p[1]) ** 2;
-    if (d2 < bestD2) {
-      bestD2 = d2;
-      nearestIndex = i;
-    }
-  }
+  const pos = routePosition();
+  if (!pos) return;
 
-  let remaining = Math.sqrt(bestD2);
-  for (let i = nearestIndex; i < activeRoute.length - 1; i++) {
-    remaining += Math.hypot(
-      activeRoute[i + 1][0] - activeRoute[i][0],
-      activeRoute[i + 1][1] - activeRoute[i][1]
-    );
-  }
-
-  if (remaining < 15) {
+  if (pos.remaining < 15) {
     routeStatusEl.textContent = 'وصلت قرب: ' + activeRouteTarget.label;
+    if (navInstructionEl) navInstructionEl.textContent = 'وصلت قرب الوجهة';
     activeRoute = [];
     activeRouteTarget = null;
+    setTimeout(() => {
+      if (navGuideEl && !activeRouteTarget) navGuideEl.style.display = 'none';
+    }, 2500);
     return;
   }
 
-  const label = remaining < 1000
-    ? Math.round(remaining) + ' م'
-    : (remaining / 1000).toFixed(2) + ' كم';
+  const label = pos.remaining < 1000
+    ? Math.round(pos.remaining) + ' م'
+    : (pos.remaining / 1000).toFixed(2) + ' كم';
+
   routeStatusEl.textContent = 'متبقي: ' + label + ' إلى ' + activeRouteTarget.label;
+  updateNavigationGuide(pos);
+
+  const now = performance.now();
+  if (pos.deviation > 35 && now - lastRerouteAt > 8000) {
+    const target = activeRouteTarget;
+    lastRerouteAt = now;
+    const rerouted = await planRouteToTarget(target, true);
+    if (rerouted && routeStatusEl) routeStatusEl.textContent += ' • أُعيد حساب المسار';
+  }
 }
 
 function updateNearbyFeature() {
