@@ -18,6 +18,7 @@ const roadSegments = [];
 const collisionCells = new Map();
 const verifiedOverrides = new Map();
 let referenceCatalog = [];
+let bundledSnapshot = null;
 const namedFeatures = [];
 const inspectables = [];
 const raycaster = new THREE.Raycaster();
@@ -52,6 +53,7 @@ const inspectPanel = document.getElementById('inspectPanel');
 const inspectTitleEl = document.getElementById('inspectTitle');
 const inspectBodyEl = document.getElementById('inspectBody');
 const inspectCloseBtn = document.getElementById('inspectCloseBtn');
+const inspectOsmLink = document.getElementById('inspectOsmLink');
 const copyCoordsBtn = document.getElementById('copyCoordsBtn');
 const navGuideEl = document.getElementById('navGuide');
 const navArrowEl = document.getElementById('navArrow');
@@ -341,6 +343,7 @@ function inspectRows(meta) {
   push('النوع', meta?.type);
   push('الاسم', tags['name:ar'] || tags.name);
   push('المرجع', tags.ref);
+  push('آخر تحديث OSM', tags.__osm_timestamp ? new Date(tags.__osm_timestamp).toLocaleString('ar-SA') : '');
   push('العنوان', featureLabel({
     'addr:housenumber': tags['addr:housenumber'],
     'addr:street': tags['addr:street'],
@@ -382,6 +385,15 @@ function showInspection(meta, distance) {
 
   if (Number.isFinite(distance)) rows.push(['المسافة عنك', Math.round(distance) + ' م']);
   rows.push(['المصدر', 'OpenStreetMap']);
+
+  if (inspectOsmLink) {
+    if (/^(node|way|relation)\/\d+$/.test(meta?.osm || '')) {
+      inspectOsmLink.href = 'https://www.openstreetmap.org/' + meta.osm;
+      inspectOsmLink.hidden = false;
+    } else {
+      inspectOsmLink.hidden = true;
+    }
+  }
 
   inspectBodyEl.innerHTML = rows.map(([k,v]) =>
     '<div class="row"><span class="key">' + escapeHtml(k) + '</span><span>' + escapeHtml(v) + '</span></div>'
@@ -496,6 +508,16 @@ async function loadVerifiedOverrides() {
         verifiedOverrides.set(item.osm, item);
       }
     }
+  } catch {}
+}
+
+async function loadBundledSnapshot() {
+  try {
+    const response = await fetch('./data/osm-snapshot.json', { cache: 'no-store' });
+    if (!response.ok) return;
+    const json = await response.json();
+    if (!Array.isArray(json.elements) || !json.center || !Number.isFinite(json.radius_m)) return;
+    bundledSnapshot = json;
   } catch {}
 }
 
@@ -1040,7 +1062,29 @@ function setDataSourceStatus(source) {
   if (source === 'live') dataStatusEl.textContent = 'بيانات الخريطة: مباشرة من OpenStreetMap';
   else if (source === 'cache') dataStatusEl.textContent = 'بيانات الخريطة: نسخة محلية موثقة (أقل من 7 أيام)';
   else if (source === 'stale-cache') dataStatusEl.textContent = 'بيانات الخريطة: نسخة محلية أقدم بسبب تعذر الاتصال';
-  else dataStatusEl.textContent = 'بيانات الخريطة: جارٍ التحميل...';
+  else if (source === 'bundled') {
+    const stamp = bundledSnapshot?.fetched_at ? ' • ' + new Date(bundledSnapshot.fetched_at).toLocaleDateString('ar-SA') : '';
+    dataStatusEl.textContent = 'بيانات الخريطة: لقطة OSM مرفقة مع النسخة' + stamp;
+  } else dataStatusEl.textContent = 'بيانات الخريطة: جارٍ التحميل...';
+}
+
+function haversineMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const p1 = lat1 * Math.PI / 180, p2 = lat2 * Math.PI / 180;
+  const dP = (lat2 - lat1) * Math.PI / 180;
+  const dL = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dP/2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dL/2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function snapshotCovers(lat, lon) {
+  if (!bundledSnapshot?.center || !Number.isFinite(bundledSnapshot.radius_m)) return false;
+  const d = haversineMeters(
+    lat, lon,
+    Number(bundledSnapshot.center.lat),
+    Number(bundledSnapshot.center.lon)
+  );
+  return d + LOAD_RADIUS_M <= bundledSnapshot.radius_m;
 }
 
 async function fetchOSMAt(lat, lon) {
@@ -1069,7 +1113,7 @@ async function fetchOSMAt(lat, lon) {
     'way["shop"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
     'way["tourism"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
     'way["place"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
-    ');(._;>;);out body;';
+    ');(._;>;);out meta;';
 
   const endpoints = [
     'https://overpass-api.de/api/interpreter',
@@ -1117,6 +1161,11 @@ async function fetchOSMAt(lat, lon) {
     return cached.data;
   }
 
+  if (snapshotCovers(lat, lon) && Array.isArray(bundledSnapshot?.elements)) {
+    setDataSourceStatus('bundled');
+    return { elements: bundledSnapshot.elements };
+  }
+
   throw lastErr || new Error('تعذر جلب الخريطة');
 }
 
@@ -1137,10 +1186,10 @@ function buildFromOSM(data) {
     registerNamedWay(e, pts);
 
     if (e.tags.highway) {
-      addRoad(pts, e.tags, e.id);
+      addRoad(pts, { ...e.tags, __osm_timestamp: e.timestamp || '' }, e.id);
       roads++;
     } else if (e.tags.building) {
-      addBuilding(pts, e.tags, e.id);
+      addBuilding(pts, { ...e.tags, __osm_timestamp: e.timestamp || '' }, e.id);
       buildings++;
     } else if (e.tags.barrier) {
       addBarrier(pts, { ...e.tags, __osm: 'way/' + e.id }, e.nodes, nodes);
@@ -1666,7 +1715,7 @@ joy.addEventListener('touchend', () => {
   stick.style.transform = 'translate(0,0)';
 });
 
-Promise.all([loadVerifiedOverrides(), loadReferenceCatalog()]).finally(() => streamAroundPlayer(true));
+Promise.all([loadVerifiedOverrides(), loadReferenceCatalog(), loadBundledSnapshot()]).finally(() => streamAroundPlayer(true));
 
 function animate() {
   requestAnimationFrame(animate);
