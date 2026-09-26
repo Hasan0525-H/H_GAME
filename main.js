@@ -1,5 +1,10 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+import { Sky } from 'three/addons/objects/Sky.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 const CENTER = { lat: 18.58979, lon: 41.4123419 };
 const LOAD_RADIUS_M = 1700;
@@ -69,7 +74,7 @@ const startBtn = document.getElementById('startBtn');
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xaacbe5);
-scene.fog = new THREE.FogExp2(0xcbbf9f, 0.00006);
+scene.fog = new THREE.FogExp2(0xd5c7a6, 0.000045);
 
 const camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.08, 9000);
 camera.position.set(0, EYE_HEIGHT, 0);
@@ -98,9 +103,41 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 0.98;
 root.appendChild(renderer.domElement);
 
-scene.add(new THREE.HemisphereLight(0xe6f1ff, 0x9e825e, 2.1));
+const composer = new EffectComposer(renderer);
+composer.setPixelRatio(adaptivePixelRatio);
+composer.setSize(innerWidth, innerHeight);
 
-const sun = new THREE.DirectionalLight(0xffefd2, 2.45);
+const renderPass = new RenderPass(scene, camera);
+composer.addPass(renderPass);
+
+const ssaoPass = new SSAOPass(scene, camera, innerWidth, innerHeight);
+ssaoPass.kernelRadius = 10;
+ssaoPass.minDistance = 0.0015;
+ssaoPass.maxDistance = 0.11;
+composer.addPass(ssaoPass);
+
+const outputPass = new OutputPass();
+composer.addPass(outputPass);
+
+scene.add(new THREE.HemisphereLight(0xe8f3ff, 0x9b8461, 1.75));
+
+const sky = new Sky();
+sky.scale.setScalar(100000);
+scene.add(sky);
+sky.material.uniforms.turbidity.value = 4.8;
+sky.material.uniforms.rayleigh.value = 2.2;
+sky.material.uniforms.mieCoefficient.value = 0.004;
+sky.material.uniforms.mieDirectionalG.value = 0.78;
+
+const skySun = new THREE.Vector3();
+const skyElevation = 34;
+const skyAzimuth = 225;
+const skyPhi = THREE.MathUtils.degToRad(90 - skyElevation);
+const skyTheta = THREE.MathUtils.degToRad(skyAzimuth);
+skySun.setFromSphericalCoords(1, skyPhi, skyTheta);
+sky.material.uniforms.sunPosition.value.copy(skySun);
+
+const sun = new THREE.DirectionalLight(0xfff0d2, 2.25);
 sun.position.set(-900, 1200, -650);
 sun.castShadow = true;
 sun.shadow.mapSize.set(3072, 3072);
@@ -117,10 +154,86 @@ const ground = new THREE.Mesh(
   new THREE.PlaneGeometry(30000, 30000),
   new THREE.MeshStandardMaterial({ color: 0xcab88f, roughness: 1 })
 );
+
+const SATELLITE_TILE_ZOOM = 16;
+const SATELLITE_TILE_RADIUS = 3;
+const satelliteGroup = new THREE.Group();
+satelliteGroup.name = 'real-satellite-ground';
+scene.add(satelliteGroup);
+
+function lonLatToTile(lon, lat, zoom) {
+  const n = 2 ** zoom;
+  const x = Math.floor((lon + 180) / 360 * n);
+  const latRad = THREE.MathUtils.degToRad(lat);
+  const y = Math.floor((1 - Math.asinh(Math.tan(latRad)) / Math.PI) / 2 * n);
+  return { x, y };
+}
+
+function tileLon(x, zoom) {
+  return x / (2 ** zoom) * 360 - 180;
+}
+
+function tileLat(y, zoom) {
+  const n = Math.PI - 2 * Math.PI * y / (2 ** zoom);
+  return THREE.MathUtils.radToDeg(Math.atan(Math.sinh(n)));
+}
+
+function addSatelliteTile(tileX, tileY, zoom) {
+  const west = tileLon(tileX, zoom);
+  const east = tileLon(tileX + 1, zoom);
+  const north = tileLat(tileY, zoom);
+  const south = tileLat(tileY + 1, zoom);
+
+  const nw = toXY(north, west);
+  const se = toXY(south, east);
+  const width = Math.abs(se[0] - nw[0]);
+  const depth = Math.abs(se[1] - nw[1]);
+  const cx = (nw[0] + se[0]) / 2;
+  const cz = (nw[1] + se[1]) / 2;
+
+  const url =
+    'https://tiles.maps.eox.at/wmts/1.0.0/' +
+    's2cloudless-2024_3857/default/GoogleMapsCompatible/' +
+    zoom + '/' + tileY + '/' + tileX + '.jpg';
+
+  const texture = new THREE.TextureLoader().load(
+    url,
+    tex => {
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+      tex.needsUpdate = true;
+    },
+    undefined,
+    () => {}
+  );
+  texture.colorSpace = THREE.SRGBColorSpace;
+
+  const material = new THREE.MeshStandardMaterial({
+    map: texture,
+    roughness: 1,
+    metalness: 0
+  });
+  const tile = new THREE.Mesh(new THREE.PlaneGeometry(width, depth), material);
+  tile.rotation.x = -Math.PI / 2;
+  tile.position.set(cx, -0.032, cz);
+  tile.receiveShadow = true;
+  satelliteGroup.add(tile);
+}
+
+function loadRealSatelliteGround() {
+  const center = lonLatToTile(CENTER.lon, CENTER.lat, SATELLITE_TILE_ZOOM);
+  for (let dy = -SATELLITE_TILE_RADIUS; dy <= SATELLITE_TILE_RADIUS; dy++) {
+    for (let dx = -SATELLITE_TILE_RADIUS; dx <= SATELLITE_TILE_RADIUS; dx++) {
+      addSatelliteTile(center.x + dx, center.y + dy, SATELLITE_TILE_ZOOM);
+    }
+  }
+}
+
 ground.rotation.x = -Math.PI / 2;
 ground.position.y = -0.04;
 ground.receiveShadow = true;
 scene.add(ground);
+loadRealSatelliteGround();
 
 const controls = new PointerLockControls(camera, renderer.domElement);
 const clock = new THREE.Clock();
@@ -1604,6 +1717,8 @@ function setAdaptivePixelRatio(next) {
   adaptivePixelRatio = clamped;
   renderer.setPixelRatio(adaptivePixelRatio);
   renderer.setSize(innerWidth, innerHeight, false);
+  composer.setPixelRatio(adaptivePixelRatio);
+  composer.setSize(innerWidth, innerHeight);
 }
 
 function updateAdaptiveQuality(dt) {
@@ -2051,7 +2166,7 @@ function animate() {
     persistPlayerState();
   }
 
-  renderer.render(scene, camera);
+  composer.render();
 }
 animate();
 
@@ -2059,4 +2174,5 @@ addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
 });
