@@ -19,6 +19,8 @@ const collisionCells = new Map();
 const verifiedOverrides = new Map();
 let referenceCatalog = [];
 let bundledSnapshot = null;
+let overtureLoaded = false;
+let overtureBuildingCount = 0;
 const namedFeatures = [];
 const inspectables = [];
 const raycaster = new THREE.Raycaster();
@@ -406,7 +408,7 @@ function showInspection(meta, distance) {
     'عنصر من بيانات الخريطة';
 
   if (Number.isFinite(distance)) rows.push(['المسافة عنك', Math.round(distance) + ' م']);
-  rows.push(['المصدر', 'OpenStreetMap']);
+  rows.push(['المصدر', meta?.source || 'OpenStreetMap']);
 
   if (inspectOsmLink) {
     if (/^(node|way|relation)\/\d+$/.test(meta?.osm || '')) {
@@ -1229,6 +1231,115 @@ async function fetchOSMAt(lat, lon) {
   throw lastErr || new Error('تعذر جلب الخريطة');
 }
 
+
+function polygonCentroid(points) {
+  if (!points.length) return [0, 0];
+  let x = 0, z = 0;
+  for (const p of points) { x += p[0]; z += p[1]; }
+  return [x / points.length, z / points.length];
+}
+
+function addOvertureBuildingPolygon(ring, properties = {}) {
+  if (!Array.isArray(ring) || ring.length < 4) return false;
+  const points = ring
+    .filter(p => Array.isArray(p) && p.length >= 2)
+    .map(([lon, lat]) => toXY(Number(lat), Number(lon)))
+    .filter(p => Number.isFinite(p[0]) && Number.isFinite(p[1]));
+  if (points.length < 4) return false;
+
+  const centroid = polygonCentroid(points);
+  for (const poly of buildingPolys) {
+    if (pointInPoly(centroid[0], centroid[1], poly)) return false;
+  }
+
+  let height = Number(properties.height);
+  let exactHeight = Number.isFinite(height) && height > 1;
+  if (!exactHeight) {
+    const floors = Number(properties.num_floors ?? properties.level);
+    if (Number.isFinite(floors) && floors > 0) {
+      height = Math.min(floors * 3.05, 36);
+      exactHeight = true;
+    } else {
+      height = 3.2;
+      estimatedDimensionCount++;
+    }
+  }
+
+  const geo = new THREE.ExtrudeGeometry(makeShape(points), {
+    depth: Math.min(Math.max(height, 2.6), 40),
+    bevelEnabled: false,
+    curveSegments: 1
+  });
+  geo.rotateX(-Math.PI / 2);
+
+  const mesh = new THREE.Mesh(
+    geo,
+    new THREE.MeshStandardMaterial({ color: 0xd6c9b1, roughness: 0.92 })
+  );
+  mesh.position.y = 0.045;
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+
+  attachInspectMeta(mesh, {
+    osm: '',
+    overtureId: properties.id || '',
+    type: 'building',
+    source: 'Overture Maps',
+    tags: {
+      building: properties.class || properties.subtype || 'yes',
+      height: Number.isFinite(Number(properties.height)) ? properties.height : '',
+      'building:levels': Number.isFinite(Number(properties.num_floors)) ? properties.num_floors : ''
+    },
+    heightKnown: exactHeight,
+    groundVerified: false,
+    verifiedSource: ''
+  });
+
+  registerSolidPolygon(points);
+  overtureBuildingCount++;
+  return true;
+}
+
+function addOvertureFeature(feature) {
+  const g = feature?.geometry;
+  if (!g || !g.coordinates) return 0;
+  const props = { ...(feature.properties || {}), id: feature.id || feature.properties?.id || '' };
+  let count = 0;
+
+  if (g.type === 'Polygon') {
+    if (addOvertureBuildingPolygon(g.coordinates[0], props)) count++;
+  } else if (g.type === 'MultiPolygon') {
+    for (const polygon of g.coordinates) {
+      if (addOvertureBuildingPolygon(polygon?.[0], props)) count++;
+    }
+  }
+  return count;
+}
+
+async function loadOvertureBuildings() {
+  if (overtureLoaded) return;
+  overtureLoaded = true;
+
+  try {
+    const response = await fetch('./data/overture-buildings.geojson', { cache: 'no-store' });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const geojson = await response.json();
+    const features = Array.isArray(geojson.features) ? geojson.features : [];
+
+    let added = 0;
+    for (const feature of features) added += addOvertureFeature(feature);
+
+    if (added > 0) {
+      statusEl.textContent += ' • مباني Overture: ' + added;
+      if (sourceModeEl) sourceModeEl.textContent =
+        'مرجع المشهد: OpenStreetMap + Overture Maps • لا واجهات غير موثقة';
+    }
+  } catch (err) {
+    console.warn('Overture buildings unavailable:', err);
+  }
+}
+
 function buildFromOSM(data) {
   const nodes = new Map();
   for (const e of data.elements) if (e.type === 'node') nodes.set(e.id, e);
@@ -1291,6 +1402,10 @@ function buildFromOSM(data) {
   if (!didInitialSnap && roadSegments.length) {
     snapStartToNearestRoad();
     didInitialSnap = true;
+  }
+
+  if (!overtureLoaded && totalStats.buildings < 5) {
+    loadOvertureBuildings();
   }
 }
 
