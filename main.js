@@ -21,6 +21,9 @@ let referenceCatalog = [];
 let bundledSnapshot = null;
 let externalBuildingsLoaded = false;
 let externalBuildingCount = 0;
+let buildingSectorIndex = null;
+const loadedBuildingSectors = new Set();
+let offlineBuildingPackMiB = 0;
 const namedFeatures = [];
 const inspectables = [];
 const raycaster = new THREE.Raycaster();
@@ -73,6 +76,17 @@ scene.fog = new THREE.FogExp2(0xcbbf9f, 0.000095);
 
 const camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.08, 9000);
 camera.position.set(0, EYE_HEIGHT, 0);
+
+const isCoarse = matchMedia('(pointer:coarse)').matches;
+const deviceMemoryGB = Number(navigator.deviceMemory || 4);
+const maxDevicePixelRatio = isCoarse
+  ? (deviceMemoryGB <= 4 ? 1.25 : 1.55)
+  : (deviceMemoryGB <= 4 ? 1.45 : 1.8);
+let adaptivePixelRatio = Math.min(devicePixelRatio || 1, maxDevicePixelRatio);
+let fpsSampleTime = 0;
+let fpsFrames = 0;
+let lastFps = 60;
+let qualityCooldown = 0;
 
 const renderer = new THREE.WebGLRenderer({
   antialias: true,
@@ -132,16 +146,6 @@ let lastRerouteAt = 0;
 const MAP_DB_NAME = 'hgame-map-cache-v1';
 const MAP_DB_STORE = 'osm';
 const MAP_CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
-const isCoarse = matchMedia('(pointer:coarse)').matches;
-const deviceMemoryGB = Number(navigator.deviceMemory || 4);
-const maxDevicePixelRatio = isCoarse
-  ? (deviceMemoryGB <= 4 ? 1.25 : 1.55)
-  : (deviceMemoryGB <= 4 ? 1.45 : 1.8);
-let adaptivePixelRatio = Math.min(devicePixelRatio || 1, maxDevicePixelRatio);
-let fpsSampleTime = 0;
-let fpsFrames = 0;
-let lastFps = 60;
-let qualityCooldown = 0;
 
 addEventListener('keydown', e => {
   keys.add(e.code);
@@ -1343,6 +1347,83 @@ async function loadExternalBuildings() {
   }
 }
 
+
+async function loadBuildingSectorIndex() {
+  if (buildingSectorIndex) return buildingSectorIndex;
+  try {
+    const response = await fetch('./data/building-sectors/index.json', { cache: 'no-store' });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const json = await response.json();
+    if (!json?.sectors || !Number.isFinite(Number(json.sector_deg))) throw new Error('invalid sector index');
+    buildingSectorIndex = json;
+    offlineBuildingPackMiB = Number(json.total_pack_bytes || 0) / 1024 / 1024;
+    if (sourceModeEl && offlineBuildingPackMiB > 0) {
+      sourceModeEl.textContent =
+        'مرجع المشهد: OSM + Microsoft Footprints • حزمة أوفلاين ' +
+        offlineBuildingPackMiB.toFixed(0) + ' MiB';
+    }
+    return json;
+  } catch (err) {
+    console.warn('Building sector index unavailable:', err);
+    return null;
+  }
+}
+
+function sectorKeysNear(lat, lon, radius = 1) {
+  if (!buildingSectorIndex) return [];
+  const step = Number(buildingSectorIndex.sector_deg);
+  const iy = Math.floor(lat / step);
+  const ix = Math.floor(lon / step);
+  const keys = [];
+  for (let y = iy - radius; y <= iy + radius; y++) {
+    for (let x = ix - radius; x <= ix + radius; x++) keys.push(y + '_' + x);
+  }
+  return keys;
+}
+
+async function loadBuildingSector(key) {
+  if (!buildingSectorIndex?.sectors?.[key] || loadedBuildingSectors.has(key)) return 0;
+  loadedBuildingSectors.add(key);
+
+  try {
+    const file = buildingSectorIndex.sectors[key].file;
+    const response = await fetch('./data/building-sectors/' + file, { cache: 'force-cache' });
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const textData = await response.text();
+
+    let added = 0;
+    for (const line of textData.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      try {
+        const feature = JSON.parse(line);
+        feature.properties = {
+          ...(feature.properties || {}),
+          __source: 'Microsoft Global ML Building Footprints'
+        };
+        added += addExternalBuildingFeature(feature);
+      } catch {}
+    }
+    return added;
+  } catch (err) {
+    loadedBuildingSectors.delete(key);
+    console.warn('Building sector unavailable:', key, err);
+    return 0;
+  }
+}
+
+async function streamOfflineBuildingsAround(lat, lon) {
+  const index = await loadBuildingSectorIndex();
+  if (!index) return;
+
+  const keys = sectorKeysNear(lat, lon, 1);
+  let added = 0;
+  for (const key of keys) added += await loadBuildingSector(key);
+
+  if (added > 0) {
+    statusEl.textContent += ' • مباني أوفلاين جديدة: ' + added;
+  }
+}
+
 function buildFromOSM(data) {
   const nodes = new Map();
   for (const e of data.elements) if (e.type === 'node') nodes.set(e.id, e);
@@ -1408,7 +1489,7 @@ function buildFromOSM(data) {
   }
 
   if (!externalBuildingsLoaded && totalStats.buildings < 5) {
-    loadOvertureBuildings();
+    loadExternalBuildings();
   }
 }
 
@@ -1464,7 +1545,10 @@ async function streamAroundPlayer(force = false) {
   loadedCells.add(key);
 
   try {
-    const data = await fetchOSMAt(ll.lat, ll.lon);
+    const [data] = await Promise.all([
+      fetchOSMAt(ll.lat, ll.lon),
+      streamOfflineBuildingsAround(ll.lat, ll.lon)
+    ]);
     buildFromOSM(data);
   } catch (err) {
     console.error(err);
@@ -1935,7 +2019,7 @@ joy.addEventListener('touchend', () => {
   stick.style.transform = 'translate(0,0)';
 });
 
-Promise.all([loadVerifiedOverrides(), loadReferenceCatalog(), loadBundledSnapshot()]).finally(() => streamAroundPlayer(true));
+Promise.all([loadVerifiedOverrides(), loadReferenceCatalog(), loadBundledSnapshot(), loadBuildingSectorIndex()]).finally(() => streamAroundPlayer(true));
 
 function animate() {
   requestAnimationFrame(animate);
