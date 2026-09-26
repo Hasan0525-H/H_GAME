@@ -49,3 +49,6 @@ jobs:
           }
           console.log('reference sources:', d.sources.length);
           "
+
+      - name: Verify Overture runtime loader marker
+        run: grep -q "loadOvertureBuildings" main.js
