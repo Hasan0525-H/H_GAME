@@ -19,8 +19,8 @@ const collisionCells = new Map();
 const verifiedOverrides = new Map();
 let referenceCatalog = [];
 let bundledSnapshot = null;
-let overtureLoaded = false;
-let overtureBuildingCount = 0;
+let externalBuildingsLoaded = false;
+let externalBuildingCount = 0;
 const namedFeatures = [];
 const inspectables = [];
 const raycaster = new THREE.Raycaster();
@@ -1239,7 +1239,7 @@ function polygonCentroid(points) {
   return [x / points.length, z / points.length];
 }
 
-function addOvertureBuildingPolygon(ring, properties = {}) {
+function addExternalBuildingPolygon(ring, properties = {}) {
   if (!Array.isArray(ring) || ring.length < 4) return false;
   const points = ring
     .filter(p => Array.isArray(p) && p.length >= 2)
@@ -1283,9 +1283,9 @@ function addOvertureBuildingPolygon(ring, properties = {}) {
 
   attachInspectMeta(mesh, {
     osm: '',
-    overtureId: properties.id || '',
+    externalId: properties.id || '',
     type: 'building',
-    source: 'Overture Maps',
+    source: properties.__source || 'Microsoft Global ML Building Footprints',
     tags: {
       building: properties.class || properties.subtype || 'yes',
       height: Number.isFinite(Number(properties.height)) ? properties.height : '',
@@ -1297,46 +1297,49 @@ function addOvertureBuildingPolygon(ring, properties = {}) {
   });
 
   registerSolidPolygon(points);
-  overtureBuildingCount++;
+  externalBuildingCount++;
   return true;
 }
 
-function addOvertureFeature(feature) {
+function addExternalBuildingFeature(feature) {
   const g = feature?.geometry;
   if (!g || !g.coordinates) return 0;
   const props = { ...(feature.properties || {}), id: feature.id || feature.properties?.id || '' };
   let count = 0;
 
   if (g.type === 'Polygon') {
-    if (addOvertureBuildingPolygon(g.coordinates[0], props)) count++;
+    if (addExternalBuildingPolygon(g.coordinates[0], props)) count++;
   } else if (g.type === 'MultiPolygon') {
     for (const polygon of g.coordinates) {
-      if (addOvertureBuildingPolygon(polygon?.[0], props)) count++;
+      if (addExternalBuildingPolygon(polygon?.[0], props)) count++;
     }
   }
   return count;
 }
 
-async function loadOvertureBuildings() {
-  if (overtureLoaded) return;
-  overtureLoaded = true;
+async function loadExternalBuildings() {
+  if (externalBuildingsLoaded) return;
+  externalBuildingsLoaded = true;
 
   try {
-    const response = await fetch('./data/overture-buildings.geojson', { cache: 'no-store' });
+    const response = await fetch('./data/ms-buildings.geojson', { cache: 'no-store' });
     if (!response.ok) throw new Error('HTTP ' + response.status);
     const geojson = await response.json();
     const features = Array.isArray(geojson.features) ? geojson.features : [];
 
     let added = 0;
-    for (const feature of features) added += addOvertureFeature(feature);
+    for (const feature of features) {
+      feature.properties = { ...(feature.properties || {}), __source: 'Microsoft Global ML Building Footprints' };
+      added += addExternalBuildingFeature(feature);
+    }
 
     if (added > 0) {
-      statusEl.textContent += ' • مباني Overture: ' + added;
+      statusEl.textContent += ' • مباني Microsoft: ' + added;
       if (sourceModeEl) sourceModeEl.textContent =
-        'مرجع المشهد: OpenStreetMap + Overture Maps • لا واجهات غير موثقة';
+        'مرجع المشهد: OpenStreetMap + Microsoft Building Footprints • لا واجهات غير موثقة';
     }
   } catch (err) {
-    console.warn('Overture buildings unavailable:', err);
+    console.warn('Microsoft building footprints unavailable:', err);
   }
 }
 
@@ -1404,7 +1407,7 @@ function buildFromOSM(data) {
     didInitialSnap = true;
   }
 
-  if (!overtureLoaded && totalStats.buildings < 5) {
+  if (!externalBuildingsLoaded && totalStats.buildings < 5) {
     loadOvertureBuildings();
   }
 }
