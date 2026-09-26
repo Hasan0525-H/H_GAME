@@ -1,12 +1,104 @@
 {
+  "schema_version": 2,
   "center": {"lat": 18.58979, "lon": 41.4123419},
   "locality": "سعيدة الصوالحة",
-  "policy": "Do not add major visual features without map or ground-reference support.",
+  "policy": "Catalog references without applying them to a specific object unless that object has been exactly matched and added to verified-overrides.json.",
   "sources": [
-    {"kind":"video","title":"طريق سعيدة الصوالحة Saida Sawalha Road","url":"https://www.youtube.com/watch?v=gzD1CJJ-HNc"},
-    {"kind":"video","title":"طريق سعيدة الصوالحة-محايل عسير الجديد","url":"https://www.youtube.com/watch?v=ezvwF1w2Fwc"},
-    {"kind":"video","title":"طريق سعيدة الصوالحة-محايل عسير الجديد 2","url":"https://www.youtube.com/watch?v=LlTIRmQRsqg"},
-    {"kind":"map-gallery","title":"Yango Maps — تحويلة لسعيدة","url":"https://maps.yango.com/ar-sa/org/50135968560/gallery/?lang=ar"},
-    {"kind":"map","title":"Google Maps point supplied by user","url":"https://maps.app.goo.gl/5weSYyrgTxfFCHL97"}
+    {
+      "kind": "map",
+      "title": "Google Maps point supplied by user",
+      "url": "https://maps.app.goo.gl/5weSYyrgTxfFCHL97",
+      "geolocation_status": "exact",
+      "scope": "project-center",
+      "applies_to_scene": false
+    },
+    {
+      "kind": "video",
+      "title": "طريق سعيدة الصوالحة Saida Sawalha Road",
+      "url": "https://www.youtube.com/watch?v=gzD1CJJ-HNc",
+      "geolocation_status": "area-level",
+      "scope": "road-corridor",
+      "applies_to_scene": false
+    },
+    {
+      "kind": "video",
+      "title": "طريق سعيدة الصوالحة-محايل عسير الجديد",
+      "url": "https://www.youtube.com/watch?v=ezvwF1w2Fwc",
+      "geolocation_status": "area-level",
+      "scope": "road-corridor",
+      "applies_to_scene": false
+    },
+    {
+      "kind": "video",
+      "title": "طريق سعيدة الصوالحة-محايل عسير الجديد 2",
+      "url": "https://www.youtube.com/watch?v=LlTIRmQRsqg",
+      "geolocation_status": "area-level",
+      "scope": "road-corridor",
+      "applies_to_scene": false
+    },
+    {
+      "kind": "video",
+      "title": "طريق سعيدة الصوالحة",
+      "url": "https://www.youtube.com/watch?v=r0j_fBXv26o",
+      "geolocation_status": "area-level",
+      "scope": "road-corridor",
+      "applies_to_scene": false
+    },
+    {
+      "kind": "video-page",
+      "title": "جولة | الطريق الجديد سعيدة الصوالحة",
+      "url": "https://www.tanomah.com/video-action-s-id-969.htm",
+      "geolocation_status": "area-level",
+      "scope": "road-corridor",
+      "applies_to_scene": false
+    },
+    {
+      "kind": "map-gallery",
+      "title": "Yango Maps — تحويلة لسعيدة",
+      "url": "https://maps.yango.com/ar-sa/org/50135968560/gallery/?lang=ar",
+      "geolocation_status": "area-level",
+      "scope": "road-junction",
+      "applies_to_scene": false
+    },
+    {
+      "kind": "map-gallery",
+      "title": "طريق سعيدة الصوالحة–محايل",
+      "url": "https://maps.yango.com/ar-ae/org/212839589102/gallery/",
+      "geolocation_status": "area-level",
+      "scope": "road-corridor",
+      "applies_to_scene": false
+    },
+    {
+      "kind": "news-photos",
+      "title": "قرية المعلمات التابعة لسعيدة الصوالحة",
+      "url": "https://www.almowaten.net/2014/10/%D8%B9%D8%A8%D9%91%D8%A7%D8%B1%D8%A9-%D9%82%D9%8A%D8%AF-%D8%A7%D9%84%D8%A5%D9%86%D8%B4%D8%A7%D8%A1-%D8%A8%D8%AF%D9%88%D9%86-%D9%84%D9%88%D8%AD%D8%A9-%D8%AA%D8%B9%D8%B1%D9%8A%D9%81%D9%8A%D8%A9/",
+      "geolocation_status": "area-level",
+      "scope": "sub-village",
+      "applies_to_scene": false
+    },
+    {
+      "kind": "news-photos",
+      "title": "السيول المنقولة تداهم منازل بمركز سعيدة الصوالحة",
+      "url": "https://www.almowaten.net/2013/11/%D8%A7%D9%84%D8%B3%D9%91%D9%8A%D9%88%D9%84-%D8%A7%D9%84%D9%85%D9%86%D9%82%D9%88%D9%84%D8%A9-%D8%AA%D8%AF%D8%A7%D9%87%D9%85-%D9%85%D9%86%D8%A7%D8%B2%D9%84-%D8%A8%D9%85%D8%B1%D9%83%D8%B2-%D8%B3%D8%B9/",
+      "geolocation_status": "area-level",
+      "scope": "homes-and-roads",
+      "applies_to_scene": false
+    },
+    {
+      "kind": "news-photos",
+      "title": "أمطار الصوالحة ووادي شفقة",
+      "url": "https://www.almowaten.net/2013/08/%D8%A8%D8%A7%D9%84%D8%B5%D9%88%D8%B1-%D8%A3%D9%85%D8%B7%D8%A7%D8%B1-%D8%A7%D9%84%D8%B5%D9%88%D8%A7%D9%84%D8%AD%D8%A9-%D8%AA%D8%AA%D8%B3%D8%A8%D8%A8-%D9%81%D9%8A-%D8%AC%D8%B1%D9%8A%D8%A7%D9%86/",
+      "geolocation_status": "area-level",
+      "scope": "wadi-and-villages",
+      "applies_to_scene": false
+    },
+    {
+      "kind": "news",
+      "title": "أهالي غالب الصوالحة",
+      "url": "https://www.almowaten.net/2014/10/%D8%A3%D9%87%D8%A7%D9%84%D9%8A-%D8%BA%D8%A7%D9%84%D8%A8-%D8%A7%D9%84%D8%B5%D9%88%D8%A7%D9%84%D8%AD%D8%A9-%D9%8A%D9%86%D8%A7%D8%B4%D8%AF%D9%88%D9%86-%D8%A8%D8%A5%D9%86%D9%87%D8%A7%D8%A1-%D9%85/",
+      "geolocation_status": "area-level",
+      "scope": "sub-village",
+      "applies_to_scene": false
+    }
   ]
 }
