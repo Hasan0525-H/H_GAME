@@ -49,3 +49,14 @@ button{border:0;border-radius:14px;background:#20251f;color:#fff;padding:14px 22
 #navArrow{font-size:24px;line-height:1;transform-origin:50% 50%}
 #navInstruction{font-size:12px;white-space:nowrap}
 @media(max-width:900px),(pointer:coarse){#navGuide{top:auto;bottom:184px;max-width:72vw}#navInstruction{font-size:11px;white-space:normal}}
+
+#inspectBtn{padding:8px 10px;font-size:11px;border-radius:11px;background:rgba(24,24,22,.58);pointer-events:auto}
+.inspect-panel{position:fixed;left:14px;bottom:28px;z-index:8;width:min(340px,calc(100vw - 28px));box-sizing:border-box;background:rgba(20,20,18,.9);color:#fff;border:1px solid rgba(255,255,255,.14);border-radius:16px;padding:12px;backdrop-filter:blur(10px);box-shadow:0 14px 42px rgba(0,0,0,.28)}
+.inspect-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
+#inspectCloseBtn{width:34px;height:34px;padding:0;border-radius:9px;font-size:22px;background:rgba(255,255,255,.1)}
+#inspectBody{font-size:12px;line-height:1.65;word-break:break-word}
+#inspectBody .row{display:flex;justify-content:space-between;gap:14px;border-top:1px solid rgba(255,255,255,.07);padding:5px 0}
+#inspectBody .row:first-child{border-top:0}
+#inspectBody .key{opacity:.65}
+#copyCoordsBtn{margin-top:8px;padding:9px 10px;font-size:11px;background:rgba(255,255,255,.1)}
+@media(max-width:900px),(pointer:coarse){#inspectBtn{font-size:10px}.inspect-panel{bottom:182px;left:10px;width:min(300px,calc(100vw - 20px))}}
