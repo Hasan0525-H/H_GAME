@@ -27,8 +27,12 @@ jobs:
         run: |
           cd dist/site
           zip -r ../H_GAME-web.zip .
+          cd ..
+          sha256sum H_GAME-web.zip > SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
           name: H_GAME-web
-          path: dist/H_GAME-web.zip
+          path: |
+            dist/H_GAME-web.zip
+            dist/SHA256SUMS.txt
           if-no-files-found: error
