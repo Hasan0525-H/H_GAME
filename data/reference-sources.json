@@ -1,0 +1,12 @@
+{
+  "center": {"lat": 18.58979, "lon": 41.4123419},
+  "locality": "سعيدة الصوالحة",
+  "policy": "Do not add major visual features without map or ground-reference support.",
+  "sources": [
+    {"kind":"video","title":"طريق سعيدة الصوالحة Saida Sawalha Road","url":"https://www.youtube.com/watch?v=gzD1CJJ-HNc"},
+    {"kind":"video","title":"طريق سعيدة الصوالحة-محايل عسير الجديد","url":"https://www.youtube.com/watch?v=ezvwF1w2Fwc"},
+    {"kind":"video","title":"طريق سعيدة الصوالحة-محايل عسير الجديد 2","url":"https://www.youtube.com/watch?v=LlTIRmQRsqg"},
+    {"kind":"map-gallery","title":"Yango Maps — تحويلة لسعيدة","url":"https://maps.yango.com/ar-sa/org/50135968560/gallery/?lang=ar"},
+    {"kind":"map","title":"Google Maps point supplied by user","url":"https://maps.app.goo.gl/5weSYyrgTxfFCHL97"}
+  ]
+}
