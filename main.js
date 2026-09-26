@@ -25,6 +25,7 @@ const coordsEl = document.getElementById('coords');
 const roadNameEl = document.getElementById('roadName');
 const nearbyFeatureEl = document.getElementById('nearbyFeature');
 const accuracyEl = document.getElementById('accuracy');
+const sourceModeEl = document.getElementById('sourceMode');
 const miniMap = document.getElementById('miniMap');
 const miniCtx = miniMap?.getContext('2d');
 const homeBtn = document.getElementById('homeBtn');
@@ -90,9 +91,12 @@ const isCoarse = matchMedia('(pointer:coarse)').matches;
 addEventListener('keydown', e => keys.add(e.code));
 addEventListener('keyup', e => keys.delete(e.code));
 
-startBtn.addEventListener('click', () => {
+startBtn.addEventListener('click', async () => {
   start.style.display = 'none';
   restorePlayerState();
+  if (isCoarse && document.documentElement.requestFullscreen) {
+    try { await document.documentElement.requestFullscreen(); } catch {}
+  }
   if (!isCoarse) controls.lock();
 });
 
@@ -586,6 +590,9 @@ function buildFromOSM(data) {
     accuracyEl.textContent =
       'وضع الدقة: لا عناصر عشوائية' +
       (estimatedDimensionCount ? ' • أبعاد محايدة تقديرية: ' + estimatedDimensionCount : '');
+  }
+  if (sourceModeEl) {
+    sourceModeEl.textContent = 'مرجع المشهد: OpenStreetMap • لا تفاصيل أرضية غير موثقة';
   }
 
   if (!didInitialSnap && roadSegments.length) {
