@@ -24,3 +24,5 @@ button{border:0;border-radius:14px;background:#20251f;color:#fff;padding:14px 22
 #dataStatus{font-size:11px;opacity:.9}
 #refreshMapBtn{margin-top:6px;width:100%;padding:9px 10px;font-size:12px;border-radius:12px;background:rgba(24,24,22,.72);pointer-events:auto}
 @media(max-width:900px),(pointer:coarse){#refreshMapBtn{font-size:11px;padding:8px 6px}}
+
+#heading{font-size:11px;opacity:.9}
