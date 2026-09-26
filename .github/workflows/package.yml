@@ -12,6 +12,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate JavaScript
         run: node --check main.js
+      - name: Fetch reproducible OSM snapshot
+        run: node scripts/fetch-osm-snapshot.mjs
       - name: Build portable ZIP
         run: |
           mkdir -p dist
