@@ -18,32 +18,19 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install Capacitor
+      - name: Install dependencies
         run: npm install --no-audit --no-fund
 
       - name: Generate evidence-gated overrides
         run: node scripts/build-verified-overrides.mjs
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+      - name: Fetch Microsoft building footprints
+        run: node scripts/fetch-ms-buildings.mjs
 
-      - name: Install Overture downloader
-        run: pip install overturemaps
-
-      - name: Fetch Overture building footprints
+      - name: Verify Microsoft building footprints
         run: |
-          overturemaps download --bbox=41.3791703,18.5583491,41.4455135,18.6212309 -f geojson --type=building -o data/overture-buildings.geojson
-          python - <<'PY'
-          import json
-          p='data/overture-buildings.geojson'
-          with open(p, encoding='utf-8') as f:
-              d=json.load(f)
-          n=len(d.get('features', []))
-          print('Overture buildings:', n)
-          if n < 10:
-              raise SystemExit('Too few Overture buildings for the target area')
-          PY
+          test -s data/ms-buildings.geojson
+          node -e "const d=require('./data/ms-buildings.geojson'); if(!Array.isArray(d.features)||d.features.length<10) process.exit(1); console.log('Microsoft buildings:',d.features.length)"
 
       - name: Fetch required bundled map snapshot
         run: node scripts/fetch-osm-snapshot.mjs --required
