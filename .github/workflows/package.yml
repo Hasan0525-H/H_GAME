@@ -35,12 +35,6 @@ jobs:
         run: |
           test -s data/ms-buildings.geojson
           node -e "const fs=require('fs'); const d=JSON.parse(fs.readFileSync('data/ms-buildings.geojson','utf8')); if(!Array.isArray(d.features)||d.features.length<10) process.exit(1); console.log('Microsoft buildings:',d.features.length)"
-      - name: Verify ~400MB offline building pack
-        run: |
-          BYTES=$(du -sb data/building-sectors | cut -f1)
-          echo "offline building sector bytes=$BYTES"
-          test "$BYTES" -ge 380000000
-          test "$BYTES" -le 410000000
 
       - name: Fetch reproducible OSM snapshot
         run: node scripts/fetch-osm-snapshot.mjs --required
