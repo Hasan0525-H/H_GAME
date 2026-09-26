@@ -1,0 +1,70 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Capacitor
+        run: npm install --no-audit --no-fund
+
+      - name: Generate evidence-gated overrides
+        run: node scripts/build-verified-overrides.mjs
+
+      - name: Prepare web assets
+        run: |
+          rm -rf www
+          mkdir -p www/data
+          cp index.html styles.css main.js manifest.webmanifest icon.svg sw.js www/
+          cp -r data/* www/data/
+
+      - name: Create Android project
+        run: npx cap add android
+
+      - name: Keep stable debug signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: hgame-android-debug-keystore-v1
+
+      - name: Create signing key if missing
+        run: |
+          mkdir -p ~/.android
+          if [ ! -f ~/.android/debug.keystore ]; then
+            keytool -genkeypair -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=H_GAME Debug,O=H_GAME,C=SA"
+          fi
+
+      - name: Copy web assets into Android
+        run: npx cap copy android
+
+      - name: Set increasing version
+        shell: bash
+        run: |
+          CODE="${GITHUB_RUN_NUMBER}"
+          sed -i "s/versionCode [0-9][0-9]*/versionCode ${CODE}/" android/app/build.gradle
+          sed -i "s/versionName \"[^\"]*\"/versionName \"1.0.${CODE}\"/" android/app/build.gradle
+
+      - name: Build debug APK
+        run: |
+          chmod +x android/gradlew
+          cd android
+          ./gradlew assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: H_GAME-Android-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
