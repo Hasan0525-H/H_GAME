@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "H_GAME exact ground truth",
+  "type": "object",
+  "required": ["schema_version", "entries"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "osm", "source_url", "verification", "claims"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "osm": {"type": "string", "pattern": "^(node|way|relation)/[0-9]+$"},
+          "source_url": {"type": "string", "pattern": "^https?://"},
+          "captured_at": {"type": ["string","null"]},
+          "observer": {"type": ["string","null"]},
+          "verification": {"const": "exact-object"},
+          "position": {
+            "type": ["object","null"],
+            "properties": {
+              "lat": {"type": "number"},
+              "lon": {"type": "number"},
+              "heading_deg": {"type": ["number","null"], "minimum": 0, "maximum": 359},
+              "accuracy_m": {"type": ["number","null"], "minimum": 0}
+            }
+          },
+          "claims": {"type": "object"},
+          "notes": {"type": ["string","null"]}
+        }
+      }
+    }
+  }
+}
