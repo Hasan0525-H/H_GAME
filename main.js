@@ -1,5 +1,5 @@
-import * as THREE from 'https://esm.sh/three@0.160.1';
-import { PointerLockControls } from 'https://esm.sh/three@0.160.1/examples/jsm/controls/PointerLockControls.js';
+import * as THREE from 'three';
+import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 
 const CENTER = { lat: 18.58979, lon: 41.4123419 };
 const LOAD_RADIUS_M = 1700;
