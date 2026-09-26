@@ -1,9 +1,12 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, rm, appendFile } from 'node:fs/promises';
 import { gunzipSync } from 'node:zlib';
 
 const CENTER = { lat: 18.58979, lon: 41.4123419 };
-const BBOX = { minLon: 41.3791703, minLat: 18.5583491, maxLon: 41.4455135, maxLat: 18.6212309 };
+const LOCAL_BBOX = { minLon: 41.3791703, minLat: 18.5583491, maxLon: 41.4455135, maxLat: 18.6212309 };
 const LINKS = 'https://bfppub.blob.core.windows.net/$web/2026-08-13/dataset-links.csv';
+const SECTOR_DEG = 0.01;
+const TARGET_PACK_BYTES = 378 * 1024 * 1024;
+const MIN_PACK_BYTES = 370 * 1024 * 1024;
 
 function tileXY(lat, lon, level = 9) {
   const sinLat = Math.sin(lat * Math.PI / 180);
@@ -24,6 +27,32 @@ function quadkey(lat, lon, level = 9) {
     q += d;
   }
   return q;
+}
+
+function quadkeyCenter(q) {
+  let x = 0, y = 0;
+  for (let i = q.length; i > 0; i--) {
+    const mask = 1 << (i - 1);
+    const d = Number(q[q.length - i]);
+    if (d === 1 || d === 3) x |= mask;
+    if (d === 2 || d === 3) y |= mask;
+  }
+  const n = 1 << q.length;
+  const xf = (x + 0.5) / n;
+  const yf = (y + 0.5) / n;
+  const lon = xf * 360 - 180;
+  const lat = Math.atan(Math.sinh(Math.PI * (1 - 2 * yf))) * 180 / Math.PI;
+  return { lat, lon };
+}
+
+function haversine(a, b) {
+  const R = 6371000;
+  const p1 = a.lat * Math.PI / 180;
+  const p2 = b.lat * Math.PI / 180;
+  const dp = (b.lat - a.lat) * Math.PI / 180;
+  const dl = (b.lon - a.lon) * Math.PI / 180;
+  const h = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
 }
 
 function parseCsvLine(line) {
@@ -50,102 +79,238 @@ function parseCsvLine(line) {
   return out;
 }
 
+function normalizeFeature(obj) {
+  if (obj?.type === 'Feature' && obj.geometry) return obj;
+  if (obj?.geometry) return { type: 'Feature', geometry: obj.geometry, properties: obj.properties || {} };
+  return null;
+}
+
+function geometryCenter(feature) {
+  const coords = feature?.geometry?.coordinates;
+  if (!coords) return null;
+  let sx = 0, sy = 0, n = 0;
+  const visit = value => {
+    if (!Array.isArray(value)) return;
+    if (
+      value.length >= 2 &&
+      typeof value[0] !== 'object' &&
+      Number.isFinite(Number(value[0])) &&
+      Number.isFinite(Number(value[1]))
+    ) {
+      sx += Number(value[0]);
+      sy += Number(value[1]);
+      n++;
+    } else {
+      for (const item of value) visit(item);
+    }
+  };
+  visit(coords);
+  return n ? { lon: sx / n, lat: sy / n } : null;
+}
+
 function featureBounds(feature) {
-  const g = feature?.geometry;
-  if (!g?.coordinates) return null;
+  const coords = feature?.geometry?.coordinates;
+  if (!coords) return null;
   let minLon = Infinity, minLat = Infinity, maxLon = -Infinity, maxLat = -Infinity;
-  const visit = v => {
-    if (!Array.isArray(v)) return;
-    if (v.length >= 2 && typeof v[0] !== 'object' && Number.isFinite(Number(v[0])) && Number.isFinite(Number(v[1]))) {
-      const lon = Number(v[0]), lat = Number(v[1]);
+  const visit = value => {
+    if (!Array.isArray(value)) return;
+    if (
+      value.length >= 2 &&
+      typeof value[0] !== 'object' &&
+      Number.isFinite(Number(value[0])) &&
+      Number.isFinite(Number(value[1]))
+    ) {
+      const lon = Number(value[0]), lat = Number(value[1]);
       minLon = Math.min(minLon, lon);
       minLat = Math.min(minLat, lat);
       maxLon = Math.max(maxLon, lon);
       maxLat = Math.max(maxLat, lat);
     } else {
-      for (const x of v) visit(x);
+      for (const item of value) visit(item);
     }
   };
-  visit(g.coordinates);
-  if (!Number.isFinite(minLon)) return null;
-  return { minLon, minLat, maxLon, maxLat };
+  visit(coords);
+  return Number.isFinite(minLon) ? { minLon, minLat, maxLon, maxLat } : null;
 }
 
 function intersects(a, b) {
   return !(a.maxLon < b.minLon || a.minLon > b.maxLon || a.maxLat < b.minLat || a.minLat > b.maxLat);
 }
 
-function normalizeFeature(obj) {
-  if (obj?.type === 'Feature') return obj;
-  if (obj?.geometry) return { type: 'Feature', geometry: obj.geometry, properties: obj.properties || {} };
-  return null;
+function sectorKey(lat, lon) {
+  const iy = Math.floor(lat / SECTOR_DEG);
+  const ix = Math.floor(lon / SECTOR_DEG);
+  return iy + '_' + ix;
 }
 
-const wanted = new Set([
-  quadkey(CENTER.lat, CENTER.lon),
-  quadkey(BBOX.minLat, BBOX.minLon),
-  quadkey(BBOX.minLat, BBOX.maxLon),
-  quadkey(BBOX.maxLat, BBOX.minLon),
-  quadkey(BBOX.maxLat, BBOX.maxLon)
-]);
+function sectorMetaFromKey(key) {
+  const [iy, ix] = key.split('_').map(Number);
+  return {
+    minLat: iy * SECTOR_DEG,
+    minLon: ix * SECTOR_DEG,
+    maxLat: (iy + 1) * SECTOR_DEG,
+    maxLon: (ix + 1) * SECTOR_DEG
+  };
+}
 
-const resp = await fetch(LINKS, { headers: { 'User-Agent': 'H_GAME-Saeeda/1.0' } });
-if (!resp.ok) throw new Error('dataset-links HTTP ' + resp.status);
+await rm('data/building-sectors', { recursive: true, force: true });
+await mkdir('data/building-sectors', { recursive: true });
 
-const csv = await resp.text();
-const lines = csv.trim().split(/\r?\n/);
-const headers = parseCsvLine(lines.shift());
+const linksResp = await fetch(LINKS, { headers: { 'User-Agent': 'H_GAME-Saeeda/2.0' } });
+if (!linksResp.ok) throw new Error('dataset-links HTTP ' + linksResp.status);
+
+const csv = await linksResp.text();
+const rowsText = csv.trim().split(/\r?\n/);
+const headers = parseCsvLine(rowsText.shift());
 const ix = Object.fromEntries(headers.map((h, i) => [h.trim(), i]));
-const rows = lines.map(parseCsvLine);
+const rows = rowsText.map(parseCsvLine)
+  .filter(r => String(r[ix.Location] || '').toLowerCase().includes('saudi'))
+  .filter(r => /^\d+$/.test(String(r[ix.QuadKey] || '')))
+  .map(r => {
+    const q = String(r[ix.QuadKey]);
+    const center = quadkeyCenter(q);
+    return {
+      quadkey: q,
+      url: r[ix.Url],
+      distance: haversine(CENTER, center)
+    };
+  })
+  .filter(r => /^https?:\/\//.test(r.url))
+  .sort((a, b) => a.distance - b.distance);
 
-const matches = rows.filter(r => {
-  const loc = String(r[ix.Location] || '').toLowerCase();
-  const q = String(r[ix.QuadKey] || '');
-  return loc.includes('saudi') && wanted.has(q);
-});
+if (!rows.length) throw new Error('No Microsoft Saudi building tiles found');
 
-if (!matches.length) {
-  throw new Error('No Saudi Microsoft building tile matched quadkeys: ' + [...wanted].join(','));
-}
+const localFeatures = [];
+const sectors = new Map();
+let totalPackBytes = 0;
+let totalFeatures = 0;
+let tileCount = 0;
+let reachedTarget = false;
 
-const features = [];
-for (const r of matches) {
-  const url = r[ix.Url];
-  if (!/^https?:\/\//.test(url)) continue;
+for (const row of rows) {
+  if (reachedTarget) break;
 
-  console.log('Downloading Microsoft buildings tile', r[ix.QuadKey], url);
-  const rr = await fetch(url, { headers: { 'User-Agent': 'H_GAME-Saeeda/1.0' } });
-  if (!rr.ok) throw new Error('tile HTTP ' + rr.status);
+  console.log(
+    'Downloading Microsoft buildings tile',
+    row.quadkey,
+    'distance_km=' + (row.distance / 1000).toFixed(1)
+  );
 
-  const buf = Buffer.from(await rr.arrayBuffer());
-  const text = gunzipSync(buf).toString('utf8');
+  const response = await fetch(row.url, { headers: { 'User-Agent': 'H_GAME-Saeeda/2.0' } });
+  if (!response.ok) {
+    console.warn('Skipping tile HTTP', response.status, row.url);
+    continue;
+  }
+
+  const compressed = Buffer.from(await response.arrayBuffer());
+  const text = gunzipSync(compressed).toString('utf8');
+  const sectorBatches = new Map();
 
   for (const line of text.split(/\r?\n/)) {
     if (!line.trim()) continue;
-    let obj;
-    try { obj = JSON.parse(line); } catch { continue; }
-    const f = normalizeFeature(obj);
-    if (!f) continue;
-    const b = featureBounds(f);
-    if (b && intersects(b, BBOX)) {
-      f.properties = { ...(f.properties || {}), __source: 'Microsoft Global ML Building Footprints' };
-      features.push(f);
+
+    let raw;
+    try { raw = JSON.parse(line); } catch { continue; }
+
+    const feature = normalizeFeature(raw);
+    if (!feature) continue;
+
+    const center = geometryCenter(feature);
+    if (!center) continue;
+
+    feature.properties = {
+      ...(feature.properties || {}),
+      __source: 'Microsoft Global ML Building Footprints'
+    };
+
+    const bounds = featureBounds(feature);
+    if (bounds && intersects(bounds, LOCAL_BBOX)) {
+      localFeatures.push(feature);
     }
+
+    const key = sectorKey(center.lat, center.lon);
+    const serialized = JSON.stringify(feature) + '\n';
+    const bytes = Buffer.byteLength(serialized);
+
+    if (totalPackBytes + bytes > TARGET_PACK_BYTES && totalPackBytes >= MIN_PACK_BYTES) {
+      reachedTarget = true;
+      break;
+    }
+
+    if (!sectorBatches.has(key)) sectorBatches.set(key, []);
+    sectorBatches.get(key).push(serialized);
+
+    const meta = sectors.get(key) || {
+      file: key + '.pack',
+      ...sectorMetaFromKey(key),
+      bytes: 0,
+      features: 0
+    };
+    meta.bytes += bytes;
+    meta.features++;
+    sectors.set(key, meta);
+
+    totalPackBytes += bytes;
+    totalFeatures++;
   }
+
+  for (const [key, batch] of sectorBatches) {
+    if (!batch.length) continue;
+    await appendFile('data/building-sectors/' + key + '.pack', batch.join(''), 'utf8');
+  }
+
+  tileCount++;
+  console.log(
+    'offline footprint pack:',
+    (totalPackBytes / 1024 / 1024).toFixed(1) + ' MiB',
+    'features=' + totalFeatures,
+    'tiles=' + tileCount
+  );
 }
 
-if (features.length < 10) {
-  throw new Error('Only ' + features.length + ' Microsoft building footprints found in target bbox');
+if (localFeatures.length < 10) {
+  throw new Error('Only ' + localFeatures.length + ' Microsoft footprints found in Saeeda local bbox');
+}
+if (totalPackBytes < MIN_PACK_BYTES) {
+  throw new Error(
+    'Offline footprint pack too small: ' +
+    (totalPackBytes / 1024 / 1024).toFixed(1) +
+    ' MiB; required at least ' +
+    (MIN_PACK_BYTES / 1024 / 1024).toFixed(1) +
+    ' MiB'
+  );
 }
 
-await mkdir('data', { recursive: true });
 await writeFile('data/ms-buildings.geojson', JSON.stringify({
   type: 'FeatureCollection',
   name: 'Saeeda Al-Sawalha Microsoft building footprints',
   source: 'Microsoft Global ML Building Footprints',
   license: 'CDLA-Permissive-2.0',
   fetched_at: new Date().toISOString(),
-  features
+  features: localFeatures
 }));
 
-console.log('Microsoft building footprints in target bbox:', features.length);
+const sectorObject = {};
+for (const [key, value] of [...sectors.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+  sectorObject[key] = value;
+}
+
+await writeFile('data/building-sectors/index.json', JSON.stringify({
+  schema_version: 1,
+  source: 'Microsoft Global ML Building Footprints',
+  license: 'CDLA-Permissive-2.0',
+  center: CENTER,
+  sector_deg: SECTOR_DEG,
+  target_pack_bytes: TARGET_PACK_BYTES,
+  total_pack_bytes: totalPackBytes,
+  total_features: totalFeatures,
+  source_tiles: tileCount,
+  generated_at: new Date().toISOString(),
+  sectors: sectorObject
+}));
+
+console.log('Local Saeeda building footprints:', localFeatures.length);
+console.log('Offline building pack bytes:', totalPackBytes);
+console.log('Offline building pack MiB:', (totalPackBytes / 1024 / 1024).toFixed(2));
+console.log('Offline building sectors:', sectors.size);
+console.log('Microsoft source tiles used:', tileCount);
