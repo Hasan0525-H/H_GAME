@@ -32,6 +32,8 @@ const accuracyEl = document.getElementById('accuracy');
 const sourceModeEl = document.getElementById('sourceMode');
 const dataStatusEl = document.getElementById('dataStatus');
 const headingEl = document.getElementById('heading');
+const walkedEl = document.getElementById('walked');
+const poiCountEl = document.getElementById('poiCount');
 const miniMap = document.getElementById('miniMap');
 const miniCtx = miniMap?.getContext('2d');
 const homeBtn = document.getElementById('homeBtn');
@@ -92,6 +94,7 @@ let lastStreamCheck = 0;
 let lastNearbyCheck = 0;
 let lastMiniMapDraw = 0;
 let lastPersist = 0;
+let walkedMeters = 0;
 let estimatedDimensionCount = 0;
 const totalStats = { roads: 0, buildings: 0, details: 0 };
 let currentDataSource = 'loading';
@@ -119,6 +122,8 @@ homeBtn?.addEventListener('click', () => {
   pitch = 0;
   camera.rotation.set(0, 0, 0);
   localStorage.removeItem('hgame_player_state');
+  walkedMeters = 0;
+  if (walkedEl) walkedEl.textContent = 'المسافة التي مشيتها: 0 م';
   didInitialSnap = false;
   if (roadSegments.length) {
     snapStartToNearestRoad();
@@ -559,13 +564,29 @@ function featureKind(tags) {
 
 function registerNamedNode(node) {
   const label = featureLabel(node.tags);
-  if (!label || namedFeatureIds.has(node.id)) return;
-  namedFeatureIds.add(node.id);
+  const key = 'node/' + node.id;
+  if (!label || namedFeatureIds.has(key)) return;
+  namedFeatureIds.add(key);
   const [x, z] = toXY(node.lat, node.lon);
   namedFeatures.push({
     x, z, label,
     kind: featureKind(node.tags),
-    osm: 'node/' + node.id
+    osm: key
+  });
+}
+
+function registerNamedWay(way, points) {
+  const label = featureLabel(way.tags);
+  const key = 'way/' + way.id;
+  if (!label || namedFeatureIds.has(key) || !points.length) return;
+  namedFeatureIds.add(key);
+  let x = 0, z = 0;
+  for (const p of points) { x += p[0]; z += p[1]; }
+  x /= points.length; z /= points.length;
+  namedFeatures.push({
+    x, z, label,
+    kind: featureKind(way.tags),
+    osm: key
   });
 }
 
@@ -661,6 +682,14 @@ async function fetchOSMAt(lat, lon) {
     'node["barrier"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
     'node["name"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
     'node["addr:housenumber"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
+    'node["amenity"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
+    'node["shop"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
+    'node["tourism"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
+    'node["place"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
+    'way["amenity"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
+    'way["shop"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
+    'way["tourism"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
+    'way["place"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
     ');(._;>;);out body;';
 
   const endpoints = [
@@ -726,6 +755,7 @@ function buildFromOSM(data) {
     if (pts.length < 2) continue;
 
     renderedWays.add(e.id);
+    registerNamedWay(e, pts);
 
     if (e.tags.highway) {
       addRoad(pts, e.tags, e.id);
@@ -764,6 +794,9 @@ function buildFromOSM(data) {
   }
   if (sourceModeEl) {
     sourceModeEl.textContent = 'مرجع المشهد: OpenStreetMap • لا تفاصيل أرضية غير موثقة';
+  }
+  if (poiCountEl) {
+    poiCountEl.textContent = 'المعالم المسماة المحمّلة: ' + namedFeatures.length;
   }
 
   if (!didInitialSnap && roadSegments.length) {
@@ -917,6 +950,7 @@ function persistPlayerState() {
     z: camera.position.z,
     yaw: isCoarse ? yaw : camera.rotation.y,
     pitch: isCoarse ? pitch : camera.rotation.x,
+    walkedMeters,
     savedAt: Date.now()
   };
   try { localStorage.setItem('hgame_player_state', JSON.stringify(state)); } catch {}
@@ -932,6 +966,12 @@ function restorePlayerState() {
     camera.position.set(s.x, EYE_HEIGHT, s.z);
     yaw = Number.isFinite(s.yaw) ? s.yaw : 0;
     pitch = Number.isFinite(s.pitch) ? s.pitch : 0;
+    walkedMeters = Number.isFinite(s.walkedMeters) ? Math.max(0, s.walkedMeters) : 0;
+    if (walkedEl) {
+      walkedEl.textContent = walkedMeters < 1000
+        ? 'المسافة التي مشيتها: ' + Math.round(walkedMeters) + ' م'
+        : 'المسافة التي مشيتها: ' + (walkedMeters / 1000).toFixed(2) + ' كم';
+    }
     if (isCoarse) {
       camera.rotation.order = 'YXZ';
       camera.rotation.y = yaw;
@@ -1027,6 +1067,16 @@ function attemptMove(dx, dz) {
 
   if (!collides(nx, oldZ)) camera.position.x = nx;
   if (!collides(camera.position.x, nz)) camera.position.z = nz;
+
+  const moved = Math.hypot(camera.position.x - oldX, camera.position.z - oldZ);
+  if (moved > 0 && moved < 3) {
+    walkedMeters += moved;
+    if (walkedEl) {
+      walkedEl.textContent = walkedMeters < 1000
+        ? 'المسافة التي مشيتها: ' + Math.round(walkedMeters) + ' م'
+        : 'المسافة التي مشيتها: ' + (walkedMeters / 1000).toFixed(2) + ' كم';
+    }
+  }
 }
 
 function move(dt) {
