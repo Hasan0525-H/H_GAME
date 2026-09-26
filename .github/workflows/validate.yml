@@ -54,3 +54,8 @@ jobs:
 
       - name: Verify Microsoft building loader marker
         run: grep -q "loadExternalBuildings" main.js
+
+      - name: Verify offline sector runtime references
+        run: |
+          grep -q "building-sectors/index.json" main.js
+          grep -q "streamOfflineBuildingsAround" main.js
