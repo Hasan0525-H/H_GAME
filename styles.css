@@ -26,3 +26,5 @@ button{border:0;border-radius:14px;background:#20251f;color:#fff;padding:14px 22
 @media(max-width:900px),(pointer:coarse){#refreshMapBtn{font-size:11px;padding:8px 6px}}
 
 #heading{font-size:11px;opacity:.9}
+
+#walked,#poiCount{font-size:11px;opacity:.9}
