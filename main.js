@@ -104,12 +104,12 @@ const sun = new THREE.DirectionalLight(0xffefd2, 2.45);
 sun.position.set(-900, 1200, -650);
 sun.castShadow = true;
 sun.shadow.mapSize.set(3072, 3072);
-sun.shadow.camera.left = -1900;
-sun.shadow.camera.right = 1900;
-sun.shadow.camera.top = 1900;
-sun.shadow.camera.bottom = -1900;
-sun.shadow.camera.near = 50;
-sun.shadow.camera.far = 3500;
+sun.shadow.camera.left = -320;
+sun.shadow.camera.right = 320;
+sun.shadow.camera.top = 320;
+sun.shadow.camera.bottom = -320;
+sun.shadow.camera.near = 20;
+sun.shadow.camera.far = 1500;
 scene.add(sun);
 scene.add(sun.target);
 
@@ -652,6 +652,80 @@ function addSegmentBox(a, b, width, height, color, y = 0.02, cast = false, meta 
   return mesh;
 }
 
+function addRoadRibbon(points, width, color, y = 0.008, meta = null) {
+  if (points.length < 2 || isClosed(points)) return null;
+
+  const half = width / 2;
+  const left = [];
+  const right = [];
+
+  const segmentNormal = (a, b) => {
+    const dx = b[0] - a[0];
+    const dz = b[1] - a[1];
+    const len = Math.hypot(dx, dz) || 1;
+    return [-dz / len, dx / len];
+  };
+
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+
+    if (i === 0) {
+      const n = segmentNormal(points[0], points[1]);
+      left.push([p[0] + n[0] * half, p[1] + n[1] * half]);
+      right.push([p[0] - n[0] * half, p[1] - n[1] * half]);
+      continue;
+    }
+
+    if (i === points.length - 1) {
+      const n = segmentNormal(points[i - 1], points[i]);
+      left.push([p[0] + n[0] * half, p[1] + n[1] * half]);
+      right.push([p[0] - n[0] * half, p[1] - n[1] * half]);
+      continue;
+    }
+
+    const n1 = segmentNormal(points[i - 1], p);
+    const n2 = segmentNormal(p, points[i + 1]);
+    let mx = n1[0] + n2[0];
+    let mz = n1[1] + n2[1];
+    const ml = Math.hypot(mx, mz);
+
+    if (ml < 1e-5) {
+      mx = n2[0];
+      mz = n2[1];
+    } else {
+      mx /= ml;
+      mz /= ml;
+    }
+
+    const denom = Math.max(0.32, Math.abs(mx * n2[0] + mz * n2[1]));
+    const miter = Math.min(half / denom, half * 2.8);
+
+    left.push([p[0] + mx * miter, p[1] + mz * miter]);
+    right.push([p[0] - mx * miter, p[1] - mz * miter]);
+  }
+
+  const polygon = [...left, ...right.reverse()];
+  if (polygon.length < 4) return null;
+  polygon.push(polygon[0]);
+
+  const geo = new THREE.ShapeGeometry(makeShape(polygon));
+  geo.rotateX(-Math.PI / 2);
+
+  const mesh = new THREE.Mesh(
+    geo,
+    new THREE.MeshStandardMaterial({
+      color,
+      roughness: 0.94,
+      metalness: 0
+    })
+  );
+  mesh.position.y = y;
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+  attachInspectMeta(mesh, meta);
+  return mesh;
+}
+
 function isWalkableRoad(tags) {
   const h = tags.highway || '';
   if (!h) return false;
@@ -669,6 +743,15 @@ function addRoad(points, tags, id) {
   const width = roadWidth(effectiveTags.highway, effectiveTags);
   const color = roadColor(effectiveTags);
   const paved = !['dirt', 'earth', 'sand', 'ground', 'unpaved', 'gravel', 'fine_gravel'].includes(effectiveTags.surface || '');
+  const inspectMeta = {
+    osm: 'way/' + id,
+    type: 'road',
+    tags: effectiveTags,
+    groundVerified: !!overrideRecord,
+    verifiedSource: overrideRecord?.source_url || ''
+  };
+
+  const ribbon = addRoadRibbon(points, width, color, 0.008, inspectMeta);
 
   for (let i = 0; i < points.length - 1; i++) {
     const a = points[i], b = points[i + 1];
@@ -676,13 +759,9 @@ function addRoad(points, tags, id) {
     const len = Math.hypot(dx, dz);
     if (len < 0.5) continue;
 
-    addSegmentBox(a, b, width, 0.035, color, 0.005, false, {
-      osm: 'way/' + id,
-      type: 'road',
-      tags: effectiveTags,
-      groundVerified: !!overrideRecord,
-      verifiedSource: overrideRecord?.source_url || ''
-    });
+    if (!ribbon) {
+      addSegmentBox(a, b, width, 0.035, color, 0.005, false, inspectMeta);
+    }
     roadSegments.push({
       a, b, width, highway: effectiveTags.highway,
       name: effectiveTags.name || effectiveTags['name:ar'] || '',
@@ -1556,7 +1635,7 @@ function updateAdaptiveQuality(dt) {
 function updateSunAroundPlayer() {
   const x = camera.position.x;
   const z = camera.position.z;
-  sun.position.set(x - 900, 1200, z - 650);
+  sun.position.set(x - 520, 760, z - 390);
   sun.target.position.set(x, 0, z);
   sun.target.updateMatrixWorld();
 }
