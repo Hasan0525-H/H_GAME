@@ -1,0 +1,19 @@
+{
+  "name": "سعيدة الصوالحة - جولة واقعية",
+  "short_name": "سعيدة الصوالحة",
+  "description": "جولة ثلاثية الأبعاد تعتمد على بيانات خريطة موثقة لسعيدة الصوالحة.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#cdb98d",
+  "theme_color": "#d8c59a",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
