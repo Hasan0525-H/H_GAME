@@ -29,3 +29,17 @@ jobs:
           }
           console.log('verified overrides:', d.entries.length);
           "
+
+      - name: Validate reference catalog isolation
+        run: |
+          node -e "
+          const fs=require('fs');
+          const d=JSON.parse(fs.readFileSync('data/reference-sources.json','utf8'));
+          if(!Array.isArray(d.sources)) throw new Error('sources must be an array');
+          for(const [i,s] of d.sources.entries()){
+            if(typeof s.url!=='string' || !/^https?:\/\//.test(s.url)) throw new Error('source '+i+' needs url');
+            if(!['exact','area-level','unlocated'].includes(s.geolocation_status)) throw new Error('source '+i+' has invalid geolocation_status');
+            if(s.geolocation_status!=='exact' && s.applies_to_scene===true) throw new Error('area/unlocated source '+i+' cannot apply to scene');
+          }
+          console.log('reference sources:', d.sources.length);
+          "
