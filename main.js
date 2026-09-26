@@ -34,6 +34,8 @@ const roadNameEl = document.getElementById('roadName');
 const nearbyFeatureEl = document.getElementById('nearbyFeature');
 const accuracyEl = document.getElementById('accuracy');
 const sourceModeEl = document.getElementById('sourceMode');
+const uiToggleBtn = document.getElementById('uiToggleBtn');
+const qualityStatusEl = document.getElementById('qualityStatus');
 const referenceCountEl = document.getElementById('referenceCount');
 const dataStatusEl = document.getElementById('dataStatus');
 const headingEl = document.getElementById('heading');
@@ -74,7 +76,7 @@ const renderer = new THREE.WebGLRenderer({
   antialias: true,
   powerPreference: 'high-performance'
 });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 1.65));
+renderer.setPixelRatio(adaptivePixelRatio);
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -96,6 +98,7 @@ sun.shadow.camera.bottom = -1900;
 sun.shadow.camera.near = 50;
 sun.shadow.camera.far = 3500;
 scene.add(sun);
+scene.add(sun.target);
 
 const ground = new THREE.Mesh(
   new THREE.PlaneGeometry(30000, 30000),
@@ -128,12 +131,28 @@ const MAP_DB_NAME = 'hgame-map-cache-v1';
 const MAP_DB_STORE = 'osm';
 const MAP_CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 const isCoarse = matchMedia('(pointer:coarse)').matches;
+const deviceMemoryGB = Number(navigator.deviceMemory || 4);
+const maxDevicePixelRatio = isCoarse
+  ? (deviceMemoryGB <= 4 ? 1.25 : 1.55)
+  : (deviceMemoryGB <= 4 ? 1.45 : 1.8);
+let adaptivePixelRatio = Math.min(devicePixelRatio || 1, maxDevicePixelRatio);
+let fpsSampleTime = 0;
+let fpsFrames = 0;
+let lastFps = 60;
+let qualityCooldown = 0;
 
 addEventListener('keydown', e => {
   keys.add(e.code);
   if (e.code === 'KeyE') inspectAhead();
 });
 addEventListener('keyup', e => keys.delete(e.code));
+
+uiToggleBtn?.addEventListener('click', () => {
+  const immersive = !document.body.classList.contains('immersive');
+  document.body.classList.toggle('immersive', immersive);
+  uiToggleBtn.setAttribute('aria-pressed', String(immersive));
+  uiToggleBtn.textContent = immersive ? 'إظهار الواجهة' : 'إخفاء الواجهة';
+});
 
 startBtn.addEventListener('click', async () => {
   start.style.display = 'none';
@@ -1380,6 +1399,48 @@ function collides(x, z) {
   return false;
 }
 
+function setAdaptivePixelRatio(next) {
+  const clamped = Math.max(0.8, Math.min(maxDevicePixelRatio, next));
+  if (Math.abs(clamped - adaptivePixelRatio) < 0.04) return;
+  adaptivePixelRatio = clamped;
+  renderer.setPixelRatio(adaptivePixelRatio);
+  renderer.setSize(innerWidth, innerHeight, false);
+}
+
+function updateAdaptiveQuality(dt) {
+  fpsSampleTime += dt;
+  fpsFrames++;
+  qualityCooldown = Math.max(0, qualityCooldown - dt);
+
+  if (fpsSampleTime < 2.0) return;
+  lastFps = fpsFrames / fpsSampleTime;
+  fpsSampleTime = 0;
+  fpsFrames = 0;
+
+  if (qualityCooldown <= 0) {
+    if (lastFps < 42 && adaptivePixelRatio > 0.85) {
+      setAdaptivePixelRatio(adaptivePixelRatio - 0.12);
+      qualityCooldown = 5;
+    } else if (lastFps > 56 && adaptivePixelRatio < maxDevicePixelRatio) {
+      setAdaptivePixelRatio(adaptivePixelRatio + 0.08);
+      qualityCooldown = 7;
+    }
+  }
+
+  if (qualityStatusEl) {
+    qualityStatusEl.textContent =
+      'الجودة: تكيف تلقائي • ' + Math.round(lastFps) + ' FPS • DPR ' + adaptivePixelRatio.toFixed(2);
+  }
+}
+
+function updateSunAroundPlayer() {
+  const x = camera.position.x;
+  const z = camera.position.z;
+  sun.position.set(x - 900, 1200, z - 650);
+  sun.target.position.set(x, 0, z);
+  sun.target.updateMatrixWorld();
+}
+
 function updateCoords() {
   const p = toLatLon(camera.position.x, camera.position.z);
   coordsEl.textContent = p.lat.toFixed(6) + ', ' + p.lon.toFixed(6);
@@ -1763,6 +1824,7 @@ function animate() {
   const dt = Math.min(clock.getDelta(), 0.04);
   move(dt);
   updateCoords();
+  updateAdaptiveQuality(dt);
 
   lastStreamCheck += dt;
   if (lastStreamCheck > 2.25) {
@@ -1775,6 +1837,7 @@ function animate() {
     lastNearbyCheck = 0;
     updateNearbyFeature();
     updateRouteProgress();
+    updateSunAroundPlayer();
   }
 
   lastMiniMapDraw += dt;
