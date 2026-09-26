@@ -10,16 +10,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install web dependencies
+        run: npm install --no-audit --no-fund
       - name: Validate JavaScript
         run: node --check main.js
       - name: Generate evidence-gated overrides
         run: node scripts/build-verified-overrides.mjs
       - name: Fetch reproducible OSM snapshot
         run: node scripts/fetch-osm-snapshot.mjs
+      - name: Build self-contained web app
+        run: npm run build:web
       - name: Build portable ZIP
         run: |
-          mkdir -p dist
-          zip -r dist/H_GAME-web.zip index.html styles.css main.js manifest.webmanifest icon.svg sw.js data
+          cd dist/site
+          zip -r ../H_GAME-web.zip .
       - uses: actions/upload-artifact@v4
         with:
           name: H_GAME-web
