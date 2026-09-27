@@ -1,4 +1,4 @@
-import { mkdir, writeFile, stat, access } from 'node:fs/promises';
+import { mkdir, writeFile, stat, access, readFile } from 'node:fs/promises';
 
 const API = 'https://api.polyhaven.com/files/';
 const OUT = 'assets/quality';
@@ -33,8 +33,8 @@ const assets = [
     }
   },
   {
-    id: 'concrete',
-    prefix: 'concrete',
+    id: 'aerial_asphalt_01',
+    prefix: 'aerial_asphalt',
     maps: {
       diff: { include: ['diff'], exclude: ['disp'], ext: ['jpg','png'] },
       nor: { include: ['nor_gl'], ext: ['jpg','png'] },
@@ -114,14 +114,14 @@ const expected = [
   'sand_diff','sand_nor','sand_rough',
   'asphalt_diff','asphalt_nor','asphalt_rough',
   'plaster_diff','plaster_nor','plaster_rough',
-  'concrete_diff','concrete_nor','concrete_rough',
+  'aerial_asphalt_diff','aerial_asphalt_nor','aerial_asphalt_rough',
   'sky'
 ];
 
 const oldManifestPath = OUT + '/manifest.json';
 if (await exists(oldManifestPath)) {
   try {
-    const old = JSON.parse(await (await fetch('file://' + oldManifestPath)).text());
+    const old = JSON.parse(await readFile(oldManifestPath, 'utf8'));
     if (old?.version === VERSION) {
       let all = true;
       for (const item of old.files || []) {
