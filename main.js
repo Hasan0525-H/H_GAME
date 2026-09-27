@@ -1394,87 +1394,27 @@ function snapshotCovers(lat, lon) {
 }
 
 async function fetchOSMAt(lat, lon) {
-  const q =
-    '[out:json][timeout:40];(' +
-    'way["highway"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
-    'way["building"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
-    'way["barrier"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
-    'way["landuse"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
-    'way["leisure"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
-    'way["natural"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
-    'way["waterway"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
-    'way["power"="line"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
-    'node["natural"="tree"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
-    'node["power"~"pole|tower"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
-    'node["highway"="street_lamp"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
-    'node["barrier"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
-    'node["name"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
-    'node["addr:housenumber"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
-    'node["entrance"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
-    'node["amenity"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
-    'node["shop"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
-    'node["tourism"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
-    'node["place"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
-    'way["amenity"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
-    'way["shop"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
-    'way["tourism"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
-    'way["place"](around:' + LOAD_RADIUS_M + ',' + lat + ',' + lon + ');' +
-    ');(._;>;);out meta;';
-
-  const endpoints = [
-    'https://overpass-api.de/api/interpreter',
-    'https://overpass.kumi.systems/api/interpreter',
-    'https://overpass.nchc.org.tw/api/interpreter'
-  ];
-
-  let lastErr;
   const cacheKey = mapCacheKey(lat, lon);
   let cached = null;
 
   try {
     cached = await mapCacheGet(cacheKey);
-    if (cached && Date.now() - cached.savedAt <= MAP_CACHE_MAX_AGE) {
-      setDataSourceStatus('cache');
+    if (cached?.data) {
+      setDataSourceStatus(
+        Date.now() - cached.savedAt <= MAP_CACHE_MAX_AGE ? 'cache' : 'stale-cache'
+      );
       return cached.data;
     }
   } catch {}
-
-  loadingCount++;
-  setDataSourceStatus('loading');
-  statusEl.textContent = 'جاري جلب التفاصيل الحقيقية حول موقعك...';
-
-  for (const ep of endpoints) {
-    try {
-      const response = await fetch(ep, {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-        body: 'data=' + encodeURIComponent(q)
-      });
-      if (!response.ok) throw new Error('HTTP ' + response.status);
-      const json = await response.json();
-      loadingCount--;
-      setDataSourceStatus('live');
-      mapCachePut(cacheKey, json).catch(() => {});
-      return json;
-    } catch (err) {
-      lastErr = err;
-    }
-  }
-
-  loadingCount--;
-  if (cached?.data) {
-    setDataSourceStatus('stale-cache');
-    return cached.data;
-  }
 
   if (snapshotCovers(lat, lon) && Array.isArray(bundledSnapshot?.elements)) {
     setDataSourceStatus('bundled');
     return { elements: bundledSnapshot.elements };
   }
 
-  throw lastErr || new Error('تعذر جلب الخريطة');
+  // Offline-only runtime: never contact Overpass or any other network service.
+  throw new Error('هذه المنطقة غير موجودة داخل بيانات الخريطة المرفقة بالتطبيق.');
 }
-
 
 function polygonCentroid(points) {
   if (!points.length) return [0, 0];
