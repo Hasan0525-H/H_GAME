@@ -17,6 +17,7 @@ jobs:
           node --check scripts/fetch-osm-snapshot.mjs
           node --check scripts/fetch-ms-buildings.mjs
           node --check scripts/fetch-quality-assets.mjs
+          node --check scripts/fetch-satellite-tiles.mjs
           node --check scripts/build-verified-overrides.mjs
           node --check scripts/build-web.mjs
 
@@ -55,4 +56,12 @@ jobs:
 
       - name: Verify Microsoft building loader marker
         run: grep -q "loadExternalBuildings" main.js
+
+      - name: Verify offline satellite loader
+        run: |
+          grep -q "assets/satellite" main.js
+          if grep -q "tiles.maps.eox.at" main.js; then
+            echo "Runtime still depends on online EOX satellite tiles"
+            exit 1
+          fi
 
