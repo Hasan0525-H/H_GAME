@@ -1,4 +1,4 @@
-const CACHE='hgame-shell-v1';
+const CACHE='hgame-shell-v2';
 const SHELL=['./','./index.html','./styles.css','./main.js','./manifest.webmanifest','./icon.svg'];
 
 self.addEventListener('install',event=>{
