@@ -235,7 +235,6 @@ ground.position.y = -0.04;
 ground.receiveShadow = true;
 scene.add(ground);
 loadRealSatelliteGround();
-loadQualityAssets();
 
 const qualityTextures = {
   ready: false,
@@ -247,6 +246,9 @@ const qualityTextures = {
   wallNormal: null,
   wallRough: null
 };
+
+// Initialize quality assets only after the texture registry exists.
+loadQualityAssets();
 
 function loadRepeatTexture(path, repeat = 8, color = false) {
   const t = new THREE.TextureLoader().load(path);
