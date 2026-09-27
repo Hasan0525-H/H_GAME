@@ -1373,26 +1373,23 @@ function snapshotCovers(lat, lon) {
 }
 
 async function fetchOSMAt(lat, lon) {
-  const cacheKey = mapCacheKey(lat, lon);
-  let cached = null;
-
-  try {
-    cached = await mapCacheGet(cacheKey);
-    if (cached?.data) {
-      setDataSourceStatus(
-        Date.now() - cached.savedAt <= MAP_CACHE_MAX_AGE ? 'cache' : 'stale-cache'
-      );
-      return cached.data;
-    }
-  } catch {}
-
-  if (snapshotCovers(lat, lon) && Array.isArray(bundledSnapshot?.elements)) {
+  // Offline-first and deterministic: the APK snapshot is the authoritative
+  // runtime map. Do not wait for IndexedDB and never contact the network.
+  if (Array.isArray(bundledSnapshot?.elements) && bundledSnapshot.elements.length) {
     setDataSourceStatus('bundled');
     return { elements: bundledSnapshot.elements };
   }
 
-  // Offline-only runtime: never contact Overpass or any other network service.
-  throw new Error('هذه المنطقة غير موجودة داخل بيانات الخريطة المرفقة بالتطبيق.');
+  // Legacy local cache is only a fallback for older installed versions.
+  try {
+    const cached = await mapCacheGet(mapCacheKey(lat, lon));
+    if (cached?.data) {
+      setDataSourceStatus('stale-cache');
+      return cached.data;
+    }
+  } catch {}
+
+  throw new Error('بيانات الخريطة المحلية غير موجودة داخل هذه النسخة.');
 }
 
 function polygonCentroid(points) {
@@ -1636,8 +1633,8 @@ async function streamAroundPlayer(force = false) {
   } catch (err) {
     console.error(err);
     loadedCells.delete(key);
-    setDataSourceStatus('loading');
-    statusEl.textContent = 'تعذر تحميل هذا الجزء الآن؛ لم تتم إضافة أي معالم مختلقة.';
+    if (dataStatusEl) dataStatusEl.textContent = 'بيانات الخريطة المحلية: غير متاحة في هذه النسخة';
+    statusEl.textContent = 'تعذر قراءة بيانات الخريطة المحلية.';
   }
 }
 
