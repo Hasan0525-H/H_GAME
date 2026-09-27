@@ -23,6 +23,7 @@ jobs:
           node --check main.js
           node --check scripts/fetch-osm-snapshot.mjs
           node --check scripts/fetch-ms-buildings.mjs
+          node --check scripts/fetch-satellite-tiles.mjs
           node --check scripts/build-web.mjs
 
       - name: Generate evidence-gated overrides
@@ -43,6 +44,14 @@ jobs:
         run: |
           test -s data/osm-snapshot.json
           node -e "const d=require('./data/osm-snapshot.json'); if(!Array.isArray(d.elements)||d.elements.length<10) process.exit(1); console.log('OSM snapshot elements:',d.elements.length)"
+
+      - name: Fetch offline satellite imagery
+        run: node scripts/fetch-satellite-tiles.mjs
+
+      - name: Verify offline satellite imagery
+        run: |
+          test -s assets/satellite/manifest.json
+          node -e "const fs=require('fs');const d=JSON.parse(fs.readFileSync('assets/satellite/manifest.json','utf8'));if(!Array.isArray(d.files)||d.files.length!==49)process.exit(1);for(const f of d.files){if(!fs.existsSync('assets/satellite/'+f.file))process.exit(1)}console.log('offline satellite tiles:',d.files.length)"
 
       - name: Fetch real 4K quality assets
         run: node scripts/fetch-quality-assets.mjs
