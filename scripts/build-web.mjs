@@ -16,6 +16,7 @@ await build({
 });
 
 const index = (await readFile('index.html', 'utf8'))
+  .replace(/\s*<script type="importmap">[\s\S]*?<\/script>\s*/i, '\n')
   .replace('<script type="module" src="./main.js"></script>', '<script type="module" src="./app.js"></script>');
 await writeFile(out + '/index.html', index);
 
