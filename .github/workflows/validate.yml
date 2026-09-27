@@ -65,3 +65,15 @@ jobs:
             exit 1
           fi
 
+      - name: Enforce network-free runtime
+        run: |
+          if grep -Eq "https://overpass|fetch\(['\"]https?://" main.js; then
+            echo "Runtime network dependency detected in main.js"
+            exit 1
+          fi
+          grep -q "strip CDN import map" /dev/null 2>/dev/null || true
+          if grep -q "cdn.jsdelivr.net" dist/site/index.html 2>/dev/null; then
+            echo "Packaged HTML still contains CDN dependency"
+            exit 1
+          fi
+
