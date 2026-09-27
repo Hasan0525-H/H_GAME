@@ -26,5 +26,6 @@ for (const file of ['styles.css','manifest.webmanifest','icon.svg']) {
   await cp(file, out + '/' + file);
 }
 await cp('data', out + '/data', { recursive: true });
+await cp('assets', out + '/assets', { recursive: true });
 
 console.log('built self-contained web app:', out);
