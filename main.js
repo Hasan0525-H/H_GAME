@@ -192,10 +192,8 @@ function addSatelliteTile(tileX, tileY, zoom) {
   const cx = (nw[0] + se[0]) / 2;
   const cz = (nw[1] + se[1]) / 2;
 
-  const url =
-    'https://tiles.maps.eox.at/wmts/1.0.0/' +
-    's2cloudless-2024_3857/default/GoogleMapsCompatible/' +
-    zoom + '/' + tileY + '/' + tileX + '.jpg';
+  // Satellite imagery is bundled into the APK so the core scene works offline.
+  const url = './assets/satellite/' + zoom + '_' + tileY + '_' + tileX + '.jpg';
 
   const texture = new THREE.TextureLoader().load(
     url,
