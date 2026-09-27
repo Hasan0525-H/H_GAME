@@ -52,7 +52,6 @@ const poiCountEl = document.getElementById('poiCount');
 const miniMap = document.getElementById('miniMap');
 const miniCtx = miniMap?.getContext('2d');
 const homeBtn = document.getElementById('homeBtn');
-const refreshMapBtn = document.getElementById('refreshMapBtn');
 const poiSearch = document.getElementById('poiSearch');
 const poiOptions = document.getElementById('poiOptions');
 const goPoiBtn = document.getElementById('goPoiBtn');
@@ -70,8 +69,6 @@ let lastInspectedMeta = null;
 const navGuideEl = document.getElementById('navGuide');
 const navArrowEl = document.getElementById('navArrow');
 const navInstructionEl = document.getElementById('navInstruction');
-const start = document.getElementById('start');
-const startBtn = document.getElementById('startBtn');
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xaacbe5);
@@ -316,15 +313,6 @@ uiToggleBtn?.addEventListener('click', () => {
   uiToggleBtn.textContent = immersive ? 'إظهار الواجهة' : 'إخفاء الواجهة';
 });
 
-startBtn.addEventListener('click', async () => {
-  start.style.display = 'none';
-  restorePlayerState();
-  if (isCoarse && document.documentElement.requestFullscreen) {
-    try { await document.documentElement.requestFullscreen(); } catch {}
-  }
-  if (!isCoarse) controls.lock();
-});
-
 homeBtn?.addEventListener('click', () => {
   camera.position.set(0, EYE_HEIGHT, 0);
   yaw = 0;
@@ -338,15 +326,6 @@ homeBtn?.addEventListener('click', () => {
     snapStartToNearestRoad();
     didInitialSnap = true;
   }
-});
-
-refreshMapBtn?.addEventListener('click', async () => {
-  refreshMapBtn.disabled = true;
-  refreshMapBtn.textContent = 'جارٍ مسح النسخة المحلية...';
-  try {
-    await deleteMapCache();
-  } catch {}
-  location.reload();
 });
 
 function roadNodeKey(p) {
@@ -2125,6 +2104,7 @@ joy.addEventListener('touchend', () => {
   stick.style.transform = 'translate(0,0)';
 });
 
+restorePlayerState();
 Promise.all([loadVerifiedOverrides(), loadReferenceCatalog(), loadBundledSnapshot()]).finally(() => streamAroundPlayer(true));
 
 function animate() {
