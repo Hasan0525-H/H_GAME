@@ -5,6 +5,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 
 const CENTER = { lat: 18.58979, lon: 41.4123419 };
 const LOAD_RADIUS_M = 1700;
@@ -234,6 +235,51 @@ ground.position.y = -0.04;
 ground.receiveShadow = true;
 scene.add(ground);
 loadRealSatelliteGround();
+loadQualityAssets();
+
+const qualityTextures = {
+  ready: false,
+  groundNormal: null,
+  groundRough: null,
+  asphaltDiffuse: null,
+  asphaltNormal: null,
+  asphaltRough: null,
+  wallNormal: null,
+  wallRough: null
+};
+
+function loadRepeatTexture(path, repeat = 8, color = false) {
+  const t = new THREE.TextureLoader().load(path);
+  t.wrapS = THREE.RepeatWrapping;
+  t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(repeat, repeat);
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  if (color) t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+function loadQualityAssets() {
+  qualityTextures.groundNormal = loadRepeatTexture('./assets/quality/sand_nor.jpg', 80);
+  qualityTextures.groundRough = loadRepeatTexture('./assets/quality/sand_rough.jpg', 80);
+  qualityTextures.asphaltDiffuse = loadRepeatTexture('./assets/quality/asphalt_diff.jpg', 18, true);
+  qualityTextures.asphaltNormal = loadRepeatTexture('./assets/quality/asphalt_nor.jpg', 18);
+  qualityTextures.asphaltRough = loadRepeatTexture('./assets/quality/asphalt_rough.jpg', 18);
+  qualityTextures.wallNormal = loadRepeatTexture('./assets/quality/plaster_nor.jpg', 6);
+  qualityTextures.wallRough = loadRepeatTexture('./assets/quality/plaster_rough.jpg', 6);
+
+  ground.material.normalMap = qualityTextures.groundNormal;
+  ground.material.roughnessMap = qualityTextures.groundRough;
+  ground.material.normalScale = new THREE.Vector2(0.32, 0.32);
+  ground.material.needsUpdate = true;
+
+  new RGBELoader().load('./assets/quality/sky.hdr', tex => {
+    tex.mapping = THREE.EquirectangularReflectionMapping;
+    scene.environment = tex;
+    scene.environmentIntensity = 0.42;
+  });
+
+  qualityTextures.ready = true;
+}
 
 const controls = new PointerLockControls(camera, renderer.domElement);
 const clock = new THREE.Clock();
@@ -824,14 +870,19 @@ function addRoadRibbon(points, width, color, y = 0.008, meta = null) {
   const geo = new THREE.ShapeGeometry(makeShape(polygon));
   geo.rotateX(-Math.PI / 2);
 
-  const mesh = new THREE.Mesh(
-    geo,
-    new THREE.MeshStandardMaterial({
-      color,
-      roughness: 0.94,
-      metalness: 0
-    })
-  );
+  const material = new THREE.MeshStandardMaterial({
+    color,
+    roughness: 0.94,
+    metalness: 0
+  });
+  if (qualityTextures.ready && color === 0x5c5d60) {
+    material.map = qualityTextures.asphaltDiffuse;
+    material.normalMap = qualityTextures.asphaltNormal;
+    material.roughnessMap = qualityTextures.asphaltRough;
+    material.normalScale = new THREE.Vector2(0.55, 0.55);
+    material.color.setHex(0xffffff);
+  }
+  const mesh = new THREE.Mesh(geo, material);
   mesh.position.y = y;
   mesh.receiveShadow = true;
   scene.add(mesh);
@@ -1465,10 +1516,13 @@ function addExternalBuildingPolygon(ring, properties = {}) {
   });
   geo.rotateX(-Math.PI / 2);
 
-  const mesh = new THREE.Mesh(
-    geo,
-    new THREE.MeshStandardMaterial({ color: 0xd6c9b1, roughness: 0.92 })
-  );
+  const material = new THREE.MeshStandardMaterial({ color: 0xd6c9b1, roughness: 0.92 });
+  if (qualityTextures.ready) {
+    material.normalMap = qualityTextures.wallNormal;
+    material.roughnessMap = qualityTextures.wallRough;
+    material.normalScale = new THREE.Vector2(0.22, 0.22);
+  }
+  const mesh = new THREE.Mesh(geo, material);
   mesh.position.y = 0.045;
   mesh.castShadow = true;
   mesh.receiveShadow = true;
