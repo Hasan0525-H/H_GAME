@@ -16,6 +16,7 @@ jobs:
           node --check main.js
           node --check scripts/fetch-osm-snapshot.mjs
           node --check scripts/fetch-ms-buildings.mjs
+          node --check scripts/fetch-quality-assets.mjs
           node --check scripts/build-verified-overrides.mjs
           node --check scripts/build-web.mjs
 
